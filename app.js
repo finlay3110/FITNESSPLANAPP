@@ -1,4 +1,4 @@
-/* JRFT 8-week prep tracker — plan data in data.js, logged progress in localStorage. */
+/* JRFT 8-week prep tracker — plan data in data.js, everything logged in localStorage. */
 (function () {
   'use strict';
 
@@ -6,21 +6,45 @@
   var LIB = PLAN.exerciseLibrary || {};
   var DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
   var STORE_KEY = 'jrft-tracker-v1';
+  var MEDIA_CACHE = 'jrft-media-v1';
+  var CHART_URL = 'https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js';
+  var PRESETS = [45, 60, 90, 120];
 
   var state = load();
-  var currentWeek = 1;
-  var openDays = {};      // "1.Tue" -> true, so the open/closed state survives a re-render
+  var currentWeek = state.lastWeek || 1;
+  var openDays = {};      // "1.Tue" -> true, so open/closed survives a re-render
   var charts = [];        // live Chart.js instances, destroyed before each progress re-render
 
   /* ---------------- storage ---------------- */
 
+  function blank() {
+    return {
+      v: 2,
+      startDate: '',
+      lastWeek: 1,
+      timer: { duration: 90, auto: true, endsAt: 0 },
+      days: {}
+    };
+  }
+
   function load() {
+    var s;
     try {
       var raw = localStorage.getItem(STORE_KEY);
-      var parsed = raw ? JSON.parse(raw) : null;
-      if (parsed && parsed.days) return parsed;
+      s = raw ? JSON.parse(raw) : null;
     } catch (e) { /* corrupt or unavailable storage — start fresh */ }
-    return { v: 1, days: {} };
+    if (!s || !s.days) return blank();
+    // v1 stored no start date, week memory or timer prefs; per-exercise ticks are
+    // migrated lazily in exState, where the set count for that exercise is known.
+    var base = blank();
+    s.v = 2;
+    if (typeof s.startDate !== 'string') s.startDate = base.startDate;
+    if (typeof s.lastWeek !== 'number') s.lastWeek = base.lastWeek;
+    if (!s.timer || typeof s.timer !== 'object') s.timer = base.timer;
+    if (typeof s.timer.duration !== 'number') s.timer.duration = 90;
+    if (typeof s.timer.auto !== 'boolean') s.timer.auto = true;
+    if (typeof s.timer.endsAt !== 'number') s.timer.endsAt = 0;
+    return s;
   }
 
   function save() {
@@ -40,10 +64,12 @@
     return s;
   }
 
-  function exState(week, day, i) {
+  function exState(week, day, i, target) {
     var s = dayState(week, day);
-    if (!s.ex[i]) s.ex[i] = { done: false, weight: '', reps: '' };
-    return s.ex[i];
+    if (!s.ex[i]) s.ex[i] = { sets: 0, weight: '', reps: '' };
+    var st = s.ex[i];
+    if (typeof st.sets !== 'number') st.sets = st.done ? target.required : 0;   // v1 -> v2
+    return st;
   }
 
   /* ---------------- small DOM helper ---------------- */
@@ -54,7 +80,6 @@
       Object.keys(props).forEach(function (k) {
         if (k === 'class') n.className = props[k];
         else if (k === 'text') n.textContent = props[k];
-        else if (k === 'html') n.innerHTML = props[k];
         else if (k.slice(0, 2) === 'on') n.addEventListener(k.slice(2), props[k]);
         else if (props[k] === true) n.setAttribute(k, '');
         else if (props[k] !== false && props[k] != null) n.setAttribute(k, props[k]);
@@ -64,14 +89,25 @@
     return n;
   }
 
+  function $(id) { return document.getElementById(id); }
+
   /* ---------------- plan lookups ---------------- */
 
   function weekData(n) { return PLAN.weeks[n - 1]; }
-
   function dayPlan(week, day) { return weekData(week).days[day]; }
 
-  function exerciseCount(plan) {
-    return plan.exercises ? plan.exercises.length : 0;
+  // "3" -> 3 pips, 3 needed. "3-4" -> 4 pips, 3 needed (the extra set is optional).
+  function setsTarget(ex) {
+    var nums = String(ex.sets == null ? '' : ex.sets).match(/\d+/g);
+    if (!nums) return { pips: 1, required: 1 };
+    var lo = parseInt(nums[0], 10) || 1;
+    var hi = parseInt(nums[nums.length - 1], 10) || lo;
+    return { pips: Math.max(hi, 1), required: Math.max(lo, 1) };
+  }
+
+  function exerciseDone(week, day, ex, i) {
+    var t = setsTarget(ex);
+    return exState(week, day, i, t).sets >= t.required;
   }
 
   // How many tickable things a day holds, and how many are ticked.
@@ -79,9 +115,9 @@
     var plan = dayPlan(week, day);
     var s = dayState(week, day);
     if (plan.type === 'strength') {
-      var total = exerciseCount(plan), done = 0;
-      for (var i = 0; i < total; i++) if (s.ex[i] && s.ex[i].done) done++;
-      return { done: done, total: total };
+      var list = plan.exercises || [], done = 0;
+      list.forEach(function (ex, i) { if (exerciseDone(week, day, ex, i)) done++; });
+      return { done: done, total: list.length };
     }
     if (plan.type === 'test') {
       var items = (plan.items || []).length, ticked = 0;
@@ -89,47 +125,6 @@
       return { done: ticked, total: items };
     }
     return { done: s.done ? 1 : 0, total: 1 };
-  }
-
-  function describeTarget(ex) {
-    var bits = [];
-    if (ex.sets) bits.push(ex.sets + (String(ex.sets).indexOf('-') > -1 ? ' sets' : (Number(ex.sets) === 1 ? ' set' : ' sets')));
-    if (ex.reps) bits.push(ex.reps + (/[a-z]/i.test(String(ex.reps)) ? '' : ' reps'));
-    var line = bits.join(' × ');
-    if (ex.weight) line += (line ? ' · ' : '') + ex.weight;
-    return line;
-  }
-
-  /* ---------------- week selector ---------------- */
-
-  function renderPills() {
-    var wrap = document.getElementById('week-pills');
-    wrap.textContent = '';
-    PLAN.weeks.forEach(function (w) {
-      var btn = el('button', {
-        class: 'pill', type: 'button', 'data-week': w.week,
-        onclick: function () {
-          currentWeek = w.week;
-          syncPills();
-          renderWeek();
-          window.scrollTo({ top: 0, behavior: 'smooth' });
-        }
-      }, [el('span', { text: 'Week ' + w.week }), el('span', { class: 'dot', hidden: true, 'aria-label': 'complete' })]);
-      wrap.appendChild(btn);
-    });
-    syncPills();
-  }
-
-  // Updates the pills in place so ticking something never scrolls the strip back to Week 1.
-  function syncPills() {
-    var pills = document.querySelectorAll('#week-pills .pill');
-    Array.prototype.forEach.call(pills, function (btn) {
-      var n = Number(btn.getAttribute('data-week'));
-      var t = weekTally(n);
-      btn.classList.toggle('is-active', n === currentWeek);
-      btn.setAttribute('aria-pressed', n === currentWeek ? 'true' : 'false');
-      btn.querySelector('.dot').hidden = !(t.total > 0 && t.done === t.total);
-    });
   }
 
   function weekTally(n) {
@@ -142,35 +137,159 @@
     return { done: done, total: total };
   }
 
+  function describeTarget(ex) {
+    var bits = [];
+    if (ex.sets) bits.push(ex.sets + ' sets');
+    if (ex.reps) bits.push(ex.reps + (/[a-z]/i.test(String(ex.reps)) ? '' : ' reps'));
+    var line = bits.join(' × ');
+    if (ex.weight) line += (line ? ' · ' : '') + ex.weight;
+    return line;
+  }
+
+  function exKey(ex) { return ex.exerciseId || ex.name; }
+
+  // The most recent earlier week this exercise was logged in — the number you actually
+  // want in front of you when deciding today's load.
+  function lastLogged(week, key) {
+    for (var w = week - 1; w >= 1; w--) {
+      for (var d = 0; d < DAYS.length; d++) {
+        var plan = dayPlan(w, DAYS[d]);
+        if (plan.type !== 'strength') continue;
+        var list = plan.exercises || [];
+        for (var i = 0; i < list.length; i++) {
+          if (exKey(list[i]) !== key) continue;
+          var st = exState(w, DAYS[d], i, setsTarget(list[i]));
+          if ((st.weight || '').trim() || (st.reps || '').trim()) {
+            return { week: w, weight: (st.weight || '').trim(), reps: (st.reps || '').trim() };
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  /* ---------------- dates ---------------- */
+
+  var DAY_MS = 86400000;
+
+  function parseISO(s) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s || '');
+    return m ? new Date(+m[1], +m[2] - 1, +m[3], 12, 0, 0) : null;
+  }
+
+  function todayNoon() {
+    var n = new Date();
+    return new Date(n.getFullYear(), n.getMonth(), n.getDate(), 12, 0, 0);
+  }
+
+  function dayOffset() {
+    var start = parseISO(state.startDate);
+    if (!start) return null;
+    return Math.round((todayNoon() - start) / DAY_MS);
+  }
+
+  // Where "today" sits in the plan, or null if the plan has not started / has finished.
+  function todaySlot() {
+    var off = dayOffset();
+    if (off == null || off < 0 || off > 55) return null;
+    return { week: Math.floor(off / 7) + 1, day: DAYS[off % 7] };
+  }
+
+  function daysToTest() {
+    var off = dayOffset();
+    return off == null ? null : 54 - off;   // week 8, Saturday
+  }
+
+  function renderCountdown() {
+    var chip = $('countdown');
+    var n = daysToTest();
+    if (n == null) { chip.hidden = true; return; }
+    chip.hidden = false;
+    chip.textContent = n > 1 ? n + ' days to test day'
+      : n === 1 ? 'Test day tomorrow'
+      : n === 0 ? 'Test day today'
+      : 'Plan complete';
+    chip.classList.toggle('is-close', n >= 0 && n <= 7);
+    $('today-btn').hidden = !todaySlot();
+  }
+
+  /* ---------------- week selector ---------------- */
+
+  function renderPills() {
+    var wrap = $('week-pills');
+    wrap.textContent = '';
+    PLAN.weeks.forEach(function (w) {
+      wrap.appendChild(el('button', {
+        class: 'pill', type: 'button', 'data-week': w.week,
+        onclick: function () { goToWeek(w.week); }
+      }, [el('span', { text: 'Week ' + w.week }), el('span', { class: 'dot', hidden: true, 'aria-label': 'complete' })]));
+    });
+    syncPills();
+  }
+
+  // Updates the pills in place so ticking something never scrolls the strip back to Week 1.
+  function syncPills() {
+    Array.prototype.forEach.call(document.querySelectorAll('#week-pills .pill'), function (btn) {
+      var n = Number(btn.getAttribute('data-week'));
+      var t = weekTally(n);
+      btn.classList.toggle('is-active', n === currentWeek);
+      btn.setAttribute('aria-pressed', n === currentWeek ? 'true' : 'false');
+      btn.querySelector('.dot').hidden = !(t.total > 0 && t.done === t.total);
+    });
+  }
+
+  function goToWeek(n, scroll) {
+    currentWeek = n;
+    state.lastWeek = n;
+    save();
+    syncPills();
+    renderWeek();
+    if (scroll !== false) window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
   /* ---------------- plan view ---------------- */
 
   function renderWeek() {
     var w = weekData(currentWeek);
-    var t = weekTally(currentWeek);
-    var pct = t.total ? Math.round((t.done / t.total) * 100) : 0;
-
-    var head = document.getElementById('week-head');
+    var head = $('week-head');
     head.textContent = '';
     head.appendChild(el('h2', { text: 'Week ' + w.week + ' — ' + w.title }));
     head.appendChild(el('p', { text: w.goal }));
-    head.appendChild(el('div', { class: 'bar' }, [el('span', { style: 'width:' + pct + '%' })]));
-    head.appendChild(el('p', { class: 'small muted', text: t.done + ' of ' + t.total + ' items ticked this week' }));
+    head.appendChild(el('div', { class: 'bar' }, [el('span')]));
+    head.appendChild(el('p', { class: 'small muted' }));
+    updateWeekBar();
 
-    var list = document.getElementById('days');
+    var list = $('days');
     list.textContent = '';
     DAYS.forEach(function (d) { list.appendChild(renderDay(currentWeek, d)); });
+  }
+
+  function updateWeekBar() {
+    var t = weekTally(currentWeek);
+    var pct = t.total ? Math.round((t.done / t.total) * 100) : 0;
+    var head = $('week-head');
+    head.querySelector('.bar span').style.width = pct + '%';
+    head.querySelector('.small').textContent = t.done + ' of ' + t.total + ' items ticked this week';
+  }
+
+  function statusNode(week, day) {
+    var t = dayTally(week, day);
+    return t.total > 0 && t.done === t.total
+      ? el('span', { class: 'tick', text: '✓' })
+      : el('span', { class: 'count', text: t.total > 1 ? t.done + '/' + t.total : '' });
   }
 
   function renderDay(week, day) {
     var plan = dayPlan(week, day);
     var key = week + '.' + day;
     var open = !!openDays[key];
-    var card = el('div', { class: 'day' + (open ? ' is-open' : ''), 'data-type': plan.type });
+    var slot = todaySlot();
+    var isToday = !!slot && slot.week === week && slot.day === day;
 
-    var tally = dayTally(week, day);
-    var status = tally.total > 0 && tally.done === tally.total
-      ? el('span', { class: 'tick', text: '✓' })
-      : el('span', { class: 'count', text: tally.total > 1 ? tally.done + '/' + tally.total : '' });
+    var card = el('div', {
+      class: 'day' + (open ? ' is-open' : '') + (isToday ? ' is-today' : ''),
+      'data-type': plan.type, 'data-day': key
+    });
 
     var head = el('button', {
       class: 'day-head', type: 'button', 'aria-expanded': open ? 'true' : 'false',
@@ -180,8 +299,11 @@
       }
     }, [
       el('span', { class: 'dayname', text: day }),
-      el('span', { class: 'title', text: plan.title }),
-      status,
+      el('span', { class: 'title' }, [
+        el('span', { text: plan.title }),
+        isToday ? el('span', { class: 'today-chip', text: 'Today' }) : null
+      ]),
+      statusNode(week, day),
       el('span', { class: 'badge', text: plan.type }),
       el('span', { class: 'chev', text: '▼' })
     ]);
@@ -192,25 +314,13 @@
     return card;
   }
 
-  // Updates just the header count, the week bar and the pills — the day body is left
-  // alone so open form tips stay open and the photos are not re-fetched.
+  // Updates the header count, week bar and pills without rebuilding the day body, so
+  // open form tips stay open and the photos are not re-fetched.
   function refresh(week, day, card) {
     save();
-    var t = dayTally(week, day);
-    var status = t.total > 0 && t.done === t.total
-      ? el('span', { class: 'tick', text: '\u2713' })
-      : el('span', { class: 'count', text: t.total > 1 ? t.done + '/' + t.total : '' });
-    card.querySelector('.day-head .tick, .day-head .count').replaceWith(status);
+    card.querySelector('.day-head .tick, .day-head .count').replaceWith(statusNode(week, day));
     updateWeekBar();
     syncPills();
-  }
-
-  function updateWeekBar() {
-    var t = weekTally(currentWeek);
-    var pct = t.total ? Math.round((t.done / t.total) * 100) : 0;
-    var head = document.getElementById('week-head');
-    head.querySelector('.bar span').style.width = pct + '%';
-    head.querySelector('.small').textContent = t.done + ' of ' + t.total + ' items ticked this week';
   }
 
   function renderDayBody(week, day, card) {
@@ -222,6 +332,7 @@
       (plan.exercises || []).forEach(function (ex, i) {
         body.appendChild(renderExercise(week, day, ex, i, card));
       });
+      body.appendChild(notesField(s));
       return body;
     }
 
@@ -273,21 +384,47 @@
   }
 
   function renderExercise(week, day, ex, i, card) {
-    var st = exState(week, day, i);
+    var target = setsTarget(ex);
+    var st = exState(week, day, i, target);
     var lib = ex.exerciseId ? LIB[ex.exerciseId] : null;
     var wrap = el('div', { class: 'ex' });
 
-    var target = describeTarget(ex);
-    wrap.appendChild(el('label', { class: 'ex-top' }, [
-      el('input', {
-        type: 'checkbox', checked: !!st.done,
-        onchange: function (e) { st.done = e.target.checked; refresh(week, day, card); }
-      }),
+    var head = el('div', { class: 'ex-head' }, [
       el('span', { class: 'ex-name' }, [
         el('span', { class: 'ex-label', text: ex.name }),
-        target ? el('span', { class: 'target', text: target }) : null
-      ])
-    ]));
+        describeTarget(ex) ? el('span', { class: 'target', text: describeTarget(ex) }) : null
+      ]),
+      el('span', { class: 'ex-tick', text: '✓' })
+    ]);
+    wrap.appendChild(head);
+
+    // One pip per set: tapping pip n logs n sets done, tapping the last one undoes it.
+    var pips = el('div', { class: 'pips', role: 'group', 'aria-label': 'Sets completed' });
+    function paint() {
+      wrap.classList.toggle('is-done', st.sets >= target.required);
+      Array.prototype.forEach.call(pips.children, function (b, n) {
+        var on = n < st.sets;
+        b.classList.toggle('on', on);
+        b.setAttribute('aria-pressed', on ? 'true' : 'false');
+      });
+    }
+    for (var n = 0; n < target.pips; n++) {
+      (function (idx) {
+        pips.appendChild(el('button', {
+          class: 'pip' + (idx >= target.required ? ' optional' : ''),
+          type: 'button', text: String(idx + 1),
+          'aria-label': 'Set ' + (idx + 1) + (idx >= target.required ? ' (optional)' : ''),
+          onclick: function () {
+            var before = st.sets;
+            st.sets = (st.sets === idx + 1) ? idx : idx + 1;
+            paint();
+            refresh(week, day, card);
+            if (st.sets > before) autoRest();
+          }
+        }));
+      })(n);
+    }
+    wrap.appendChild(el('div', { class: 'sets-row' }, [el('span', { class: 'sets-label', text: 'Sets' }), pips]));
 
     var weight = el('input', {
       type: 'text', inputmode: 'text', placeholder: ex.weight ? String(ex.weight) : 'weight',
@@ -304,17 +441,34 @@
       el('label', { text: 'Reps' }, [reps])
     ]));
 
+    var prev = lastLogged(week, exKey(ex));
+    if (prev) {
+      var summary = 'Last: ' + [prev.weight, prev.reps ? prev.reps + ' reps' : ''].filter(Boolean).join(' × ')
+        + ' (week ' + prev.week + ')';
+      wrap.appendChild(el('div', { class: 'lastline' }, [
+        el('span', { text: summary }),
+        el('button', {
+          class: 'use', type: 'button', text: 'Use',
+          onclick: function () {
+            if (prev.weight) { weight.value = prev.weight; st.weight = prev.weight; }
+            if (prev.reps) { reps.value = prev.reps; st.reps = prev.reps; }
+            save();
+          }
+        })
+      ]));
+    }
+
     var images = (lib && lib.images) || [];
     if (images.length) {
       var shots = el('div', { class: 'shots' });
-      images.forEach(function (src, n) {
-        var cap = (lib.name || ex.name) + (images.length > 1 ? (n === 0 ? ' — start position' : ' — end position') : '');
+      images.forEach(function (src, k) {
+        var cap = (lib.name || ex.name) + (images.length > 1 ? (k === 0 ? ' — start position' : ' — end position') : '');
         var img = el('img', { src: src, alt: cap, loading: 'lazy', decoding: 'async' });
-        img.addEventListener('error', function () { btn.remove(); });
         var btn = el('button', {
           type: 'button', 'aria-label': 'Enlarge photo: ' + cap,
           onclick: function () { openLightbox(src, cap); }
         }, [img]);
+        img.addEventListener('error', function () { btn.remove(); });
         shots.appendChild(btn);
       });
       wrap.appendChild(shots);
@@ -326,21 +480,21 @@
       cues.forEach(function (c) { ul.appendChild(el('li', { text: c })); });
       wrap.appendChild(el('details', { class: 'cues' }, [el('summary', { text: 'Form tips' }), ul]));
     }
+
+    paint();
     return wrap;
   }
 
   /* ---------------- lightbox ---------------- */
 
-  var box = document.getElementById('lightbox');
-  var boxImg = document.getElementById('lightbox-img');
-  var boxCap = document.getElementById('lightbox-cap');
+  var box = $('lightbox'), boxImg = $('lightbox-img'), boxCap = $('lightbox-cap');
 
   function openLightbox(src, caption) {
     boxImg.src = src;
     boxImg.alt = caption;
     boxCap.textContent = caption;
     box.hidden = false;
-    document.getElementById('lightbox-close').focus();
+    $('lightbox-close').focus();
   }
 
   function closeLightbox() {
@@ -349,10 +503,114 @@
   }
 
   box.addEventListener('click', function (e) { if (e.target !== boxImg) closeLightbox(); });
-  document.getElementById('lightbox-close').addEventListener('click', closeLightbox);
+  $('lightbox-close').addEventListener('click', closeLightbox);
   document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !box.hidden) closeLightbox(); });
 
+  /* ---------------- rest timer ---------------- */
+
+  var audio = null, ticker = null;
+
+  function fmt(sec) {
+    sec = Math.max(0, Math.ceil(sec));
+    return Math.floor(sec / 60) + ':' + ('0' + (sec % 60)).slice(-2);
+  }
+
+  function beep() {
+    try {
+      if (!audio) audio = new (window.AudioContext || window.webkitAudioContext)();
+      if (audio.state === 'suspended') audio.resume();
+      [0, 0.28, 0.56].forEach(function (offset) {
+        var osc = audio.createOscillator(), gain = audio.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = 880;
+        gain.gain.setValueAtTime(0.001, audio.currentTime + offset);
+        gain.gain.exponentialRampToValueAtTime(0.35, audio.currentTime + offset + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.001, audio.currentTime + offset + 0.18);
+        osc.connect(gain).connect(audio.destination);
+        osc.start(audio.currentTime + offset);
+        osc.stop(audio.currentTime + offset + 0.2);
+      });
+    } catch (e) { /* audio blocked — the visual countdown still works */ }
+    if (navigator.vibrate) navigator.vibrate([180, 90, 180]);
+  }
+
+  function startRest(seconds) {
+    // Touching the audio context inside the tap that starts the timer unlocks it on iOS.
+    try {
+      if (!audio) audio = new (window.AudioContext || window.webkitAudioContext)();
+      if (audio.state === 'suspended') audio.resume();
+    } catch (e) { /* no audio available */ }
+    state.timer.endsAt = Date.now() + seconds * 1000;
+    save();
+    paintTimer();
+  }
+
+  function stopRest() {
+    state.timer.endsAt = 0;
+    save();
+    paintTimer();
+  }
+
+  function autoRest() {
+    if (state.timer.auto) startRest(state.timer.duration);
+  }
+
+  function paintTimer() {
+    var running = state.timer.endsAt > Date.now();
+    $('timer-idle').hidden = running;
+    $('timer-run').hidden = !running;
+    if (running) {
+      var left = (state.timer.endsAt - Date.now()) / 1000;
+      $('timer-left').textContent = fmt(left);
+      $('timer-fill').style.width = Math.max(0, Math.min(100, (left / state.timer.duration) * 100)) + '%';
+      if (!ticker) ticker = setInterval(paintTimer, 200);
+    } else if (ticker) {
+      clearInterval(ticker);
+      ticker = null;
+      if (state.timer.endsAt) {          // ran down rather than being stopped by hand
+        state.timer.endsAt = 0;
+        save();
+        beep();
+        var bar = $('timerbar');
+        bar.classList.add('done');
+        setTimeout(function () { bar.classList.remove('done'); }, 2500);
+      }
+    }
+  }
+
+  function renderTimerControls() {
+    var wrap = $('timer-presets');
+    wrap.textContent = '';
+    PRESETS.forEach(function (sec) {
+      wrap.appendChild(el('button', {
+        class: 'preset' + (sec === state.timer.duration ? ' on' : ''),
+        type: 'button', text: sec < 60 ? sec + 's' : fmt(sec),
+        'aria-pressed': sec === state.timer.duration ? 'true' : 'false',
+        onclick: function () {
+          state.timer.duration = sec;
+          save();
+          renderTimerControls();
+        }
+      }));
+    });
+    $('timer-auto').checked = state.timer.auto;
+  }
+
+  $('timer-auto').addEventListener('change', function (e) {
+    state.timer.auto = e.target.checked;
+    save();
+  });
+  $('timer-start').addEventListener('click', function () { startRest(state.timer.duration); });
+  $('timer-stop').addEventListener('click', stopRest);
+  $('timer-add').addEventListener('click', function () {
+    state.timer.endsAt = Math.max(Date.now(), state.timer.endsAt) + 30000;
+    save();
+    paintTimer();
+  });
+
   /* ---------------- progress view ---------------- */
+
+  var GRID = 'rgba(148,163,184,.18)';
 
   // Logged weights are free text ("2x10kg", "25kg", "12-14kg"). The last number in the
   // string is the useful one to plot: the per-hand load, or the top of a range.
@@ -360,8 +618,6 @@
     var m = String(value == null ? '' : value).match(/\d+(?:\.\d+)?/g);
     return m ? parseFloat(m[m.length - 1]) : null;
   }
-
-  var GRID = 'rgba(148,163,184,.18)';
 
   function renderProgress() {
     charts.forEach(function (c) { c.destroy(); });
@@ -387,8 +643,7 @@
   function renderBleep() {
     var data = bleepSeries();
     var any = data.some(function (v) { return v != null; });
-    var canvas = document.getElementById('bleep-chart');
-    var note = document.getElementById('bleep-empty');
+    var canvas = $('bleep-chart'), note = $('bleep-empty');
     if (!window.Chart) {
       canvas.parentNode.hidden = true;
       note.hidden = false;
@@ -396,6 +651,7 @@
       return;
     }
     note.hidden = any;
+    note.textContent = 'No bleep test levels logged yet. Log a level on a Saturday test day.';
     canvas.parentNode.hidden = !any;
     if (!any) return;
     charts.push(new Chart(canvas.getContext('2d'), {
@@ -444,7 +700,7 @@
         (plan.exercises || []).forEach(function (ex, i) {
           // Week 8's "optional session or full rest" line is a note, not a tracked lift.
           if (!ex.exerciseId && !ex.sets && !ex.reps) return;
-          var key = ex.exerciseId || ex.name;
+          var key = exKey(ex);
           if (!byKey[key]) {
             byKey[key] = { name: (LIB[ex.exerciseId] && LIB[ex.exerciseId].name) || ex.name, rows: [] };
             order.push(key);
@@ -452,7 +708,7 @@
           byKey[key].rows.push({
             week: w.week,
             target: ex.weight || '—',
-            logged: (exState(w.week, d, i).weight || '').trim()
+            logged: (exState(w.week, d, i, setsTarget(ex)).weight || '').trim()
           });
         });
       });
@@ -513,7 +769,7 @@
       tbody.appendChild(el('tr', null, [
         el('td', { text: 'Week ' + r.week }),
         el('td', { class: 'muted', text: String(r.target) }),
-        el('td', { class: 'val' + (r.logged ? '' : ' none'), text: r.logged || '\u2014' })
+        el('td', { class: 'val' + (r.logged ? '' : ' none'), text: r.logged || '—' })
       ]));
     });
     table.appendChild(tbody);
@@ -522,12 +778,11 @@
   }
 
   function renderStrength() {
-    var wrap = document.getElementById('strength-progress');
+    var wrap = $('strength-progress');
     wrap.textContent = '';
     var pending = [];
-    var groups = strengthGroups();
     var logged = [], empty = [];
-    groups.forEach(function (g, i) {
+    strengthGroups().forEach(function (g, i) {
       var has = g.rows.some(function (r) { return r.logged; });
       (has ? logged : empty).push({ g: g, i: i });
     });
@@ -540,50 +795,220 @@
     logged.forEach(function (item) { wrap.appendChild(exerciseCard(item.g, item.i, pending)); });
 
     if (empty.length) {
-      var box = el('details', { class: 'card fold' }, [
+      var fold = el('details', { class: 'card fold' }, [
         el('summary', { text: 'Not logged yet (' + empty.length + ')' })
       ]);
       empty.forEach(function (item) {
-        box.appendChild(el('h3', { class: 'sub', text: item.g.name }));
+        fold.appendChild(el('h3', { class: 'sub', text: item.g.name }));
         var card = exerciseCard(item.g, item.i, pending);
         card.removeChild(card.firstChild);
         card.className = 'plain';
-        box.appendChild(card);
+        fold.appendChild(card);
       });
-      wrap.appendChild(box);
+      wrap.appendChild(fold);
     }
 
     pending.forEach(function (make) { make(); });
   }
 
-  /* ---------------- tabs, reset, boot ---------------- */
+  /* ---------------- settings: start date, backup, offline ---------------- */
+
+  $('start-date').value = state.startDate || '';
+  $('start-date').addEventListener('change', function (e) {
+    state.startDate = e.target.value || '';
+    save();
+    renderCountdown();
+    renderWeek();
+    var slot = todaySlot();
+    $('start-hint').textContent = slot
+      ? 'Today is week ' + slot.week + ', ' + slot.day + '.'
+      : state.startDate ? 'That date puts today outside the 8 weeks.'
+      : 'Set this and the app opens on the right week and day, and counts down to test day.';
+  });
+
+  $('today-btn').addEventListener('click', function () {
+    var slot = todaySlot();
+    if (!slot) return;
+    openDays[slot.week + '.' + slot.day] = true;
+    goToWeek(slot.week, false);
+    var card = document.querySelector('[data-day="' + slot.week + '.' + slot.day + '"]');
+    if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+
+  // Reading a day creates its (empty) record, so a raw dump would carry all 56 days.
+  // The backup keeps only days that actually hold something.
+  function exportable() {
+    var out = JSON.parse(JSON.stringify(state));
+    out.timer.endsAt = 0;
+    Object.keys(out.days).forEach(function (k) {
+      var d = out.days[k];
+      var used = d.done || (d.notes || '').trim() || String(d.level || '').trim()
+        || Object.keys(d.items || {}).length
+        || Object.keys(d.ex || {}).some(function (i) {
+          var e = d.ex[i];
+          return e.sets > 0 || (e.weight || '').trim() || (e.reps || '').trim();
+        });
+      if (!used) delete out.days[k];
+    });
+    return out;
+  }
+
+  $('export-btn').addEventListener('click', function () {
+    var stamp = new Date().toISOString().slice(0, 10);
+    var payload = exportable();
+    var blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    var url = URL.createObjectURL(blob);
+    var a = el('a', { href: url, download: 'jrft-progress-' + stamp + '.json' });
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    $('backup-msg').textContent = 'Backup saved as jrft-progress-' + stamp + '.json ('
+      + Object.keys(payload.days).length + ' days logged).';
+  });
+
+  $('import-btn').addEventListener('click', function () { $('import-file').click(); });
+
+  $('import-file').addEventListener('change', function (e) {
+    var file = e.target.files && e.target.files[0];
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function () {
+      var incoming;
+      try {
+        incoming = JSON.parse(reader.result);
+      } catch (err) {
+        $('backup-msg').textContent = 'That file is not valid JSON.';
+        return;
+      }
+      if (!incoming || typeof incoming !== 'object' || !incoming.days || typeof incoming.days !== 'object') {
+        $('backup-msg').textContent = 'That does not look like a JRFT backup.';
+        return;
+      }
+      var n = Object.keys(incoming.days).length;
+      if (!confirm('Replace everything currently logged with this backup (' + n + ' days)?')) return;
+      state = incoming;
+      state.v = 2;
+      if (!state.timer) state.timer = blank().timer;
+      save();
+      state = load();
+      currentWeek = state.lastWeek || 1;
+      openDays = {};
+      $('start-date').value = state.startDate || '';
+      renderTimerControls();
+      renderCountdown();
+      syncPills();
+      renderWeek();
+      $('backup-msg').textContent = 'Backup restored.';
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  });
+
+  // Warms the offline cache in one go: every exercise photo plus Chart.js.
+  $('offline-btn').addEventListener('click', function () {
+    var msg = $('offline-msg');
+    // Without a service worker nothing would ever read the cache back, so saving
+    // media only helps when the app is served over http(s).
+    if (!('serviceWorker' in navigator) || !/^https?:$/.test(location.protocol)) {
+      msg.textContent = 'Offline saving needs the app served over http(s) — it does nothing when the file is opened directly from disk.';
+      return;
+    }
+    var urls = [];
+    Object.keys(LIB).forEach(function (k) {
+      (LIB[k].images || []).forEach(function (u) { if (urls.indexOf(u) < 0) urls.push(u); });
+    });
+    urls.push(CHART_URL);
+
+    var done = 0, failed = 0;
+    msg.textContent = 'Saving 0 of ' + urls.length + '…';
+    $('offline-btn').disabled = true;
+
+    // cache.add() rejects an opaque cross-origin response, so fetch and put by hand,
+    // preferring a CORS response and falling back to an opaque one.
+    function store(cache, url) {
+      return fetch(url, { mode: 'cors' })
+        .then(function (res) {
+          if (!res || !res.ok) throw new Error('bad response');
+          return cache.put(url, res);
+        })
+        .catch(function () {
+          return fetch(url, { mode: 'no-cors' }).then(function (res) { return cache.put(url, res); });
+        })
+        .catch(function () { failed++; })
+        .then(function () {
+          done++;
+          msg.textContent = 'Saving ' + done + ' of ' + urls.length + '…';
+        });
+    }
+
+    var opened = ('caches' in window) ? caches.open(MEDIA_CACHE) : Promise.reject(new Error('no cache'));
+    opened.then(function (cache) {
+      return urls.reduce(function (chain, url) {
+        return chain.then(function () { return store(cache, url); });
+      }, Promise.resolve()).then(function () {
+        msg.textContent = failed
+          ? (urls.length - failed) + ' of ' + urls.length + ' saved — ' + failed + ' could not be fetched. Try again on a better connection.'
+          : 'All ' + urls.length + ' files saved. The app now works with no signal.';
+      });
+    }).catch(function () {
+      msg.textContent = 'Could not save for offline in this browser.';
+    }).then(function () {
+      $('offline-btn').disabled = false;
+    });
+  });
+
+  $('reset-btn').addEventListener('click', function () {
+    if (!confirm('Reset all logged progress?\n\nThis clears every tick, weight, rep, note and bleep test level. The 8-week plan itself stays exactly as it is.')) return;
+    var keepStart = state.startDate, keepTimer = state.timer;
+    state = blank();
+    state.startDate = keepStart;
+    state.timer = keepTimer;
+    state.timer.endsAt = 0;
+    save();
+    openDays = {};
+    currentWeek = 1;
+    syncPills();
+    renderWeek();
+    paintTimer();
+    if (!$('view-progress').hidden) renderProgress();
+  });
+
+  /* ---------------- tabs, boot ---------------- */
 
   function showView(name) {
     var plan = name === 'plan';
-    document.getElementById('view-plan').hidden = !plan;
-    document.getElementById('view-progress').hidden = plan;
-    document.getElementById('tab-plan').classList.toggle('is-active', plan);
-    document.getElementById('tab-progress').classList.toggle('is-active', !plan);
-    document.getElementById('tab-plan').setAttribute('aria-selected', plan ? 'true' : 'false');
-    document.getElementById('tab-progress').setAttribute('aria-selected', plan ? 'false' : 'true');
-    document.getElementById('week-pills').hidden = !plan;
+    $('view-plan').hidden = !plan;
+    $('view-progress').hidden = plan;
+    $('tab-plan').classList.toggle('is-active', plan);
+    $('tab-progress').classList.toggle('is-active', !plan);
+    $('tab-plan').setAttribute('aria-selected', plan ? 'true' : 'false');
+    $('tab-progress').setAttribute('aria-selected', plan ? 'false' : 'true');
+    $('week-pills').parentNode.hidden = !plan;
+    $('timerbar').hidden = !plan;
     if (!plan) renderProgress();
     window.scrollTo({ top: 0 });
   }
 
-  document.getElementById('tab-plan').addEventListener('click', function () { showView('plan'); });
-  document.getElementById('tab-progress').addEventListener('click', function () { showView('progress'); });
+  $('tab-plan').addEventListener('click', function () { showView('plan'); });
+  $('tab-progress').addEventListener('click', function () { showView('progress'); });
 
-  document.getElementById('reset-btn').addEventListener('click', function () {
-    if (!confirm('Reset all logged progress?\n\nThis clears every tick, weight, rep, note and bleep test level. The 8-week plan itself stays exactly as it is.')) return;
-    state = { v: 1, days: {} };
-    save();
-    openDays = {};
-    syncPills();
-    renderWeek();
-    if (!document.getElementById('view-progress').hidden) renderProgress();
-  });
+  if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
+    window.addEventListener('load', function () {
+      navigator.serviceWorker.register('sw.js').catch(function (e) {
+        console.warn('Service worker not registered:', e);
+      });
+    });
+  }
 
+  var slot = todaySlot();
+  if (slot) {
+    currentWeek = slot.week;
+    openDays[slot.week + '.' + slot.day] = true;
+  }
   renderPills();
   renderWeek();
+  renderCountdown();
+  renderTimerControls();
+  paintTimer();
 })();

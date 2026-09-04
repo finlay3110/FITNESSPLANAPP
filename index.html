@@ -5,6 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0d1016">
 <meta name="color-scheme" content="dark">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="JRFT Prep">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
 <title>JRFT 8-Week Prep Tracker</title>
 <link rel="stylesheet" href="style.css">
 </head>
@@ -12,13 +18,19 @@
 
 <header class="topbar">
   <div class="topbar-row">
-    <h1>JRFT Prep</h1>
+    <div class="brand">
+      <h1>JRFT Prep</h1>
+      <span id="countdown" class="countdown" hidden></span>
+    </div>
     <div class="tabs" role="tablist">
       <button id="tab-plan" class="tab is-active" role="tab" aria-selected="true" aria-controls="view-plan">Plan</button>
       <button id="tab-progress" class="tab" role="tab" aria-selected="false" aria-controls="view-progress">Progress</button>
     </div>
   </div>
-  <nav id="week-pills" class="week-pills" aria-label="Select week"></nav>
+  <div class="pill-row">
+    <nav id="week-pills" class="week-pills" aria-label="Select week"></nav>
+    <button id="today-btn" class="today-btn" type="button" hidden>Today</button>
+  </div>
 </header>
 
 <main>
@@ -40,9 +52,46 @@
 </main>
 
 <footer class="footer">
-  <button id="reset-btn" class="danger">Reset progress</button>
-  <p class="muted small">Progress is saved on this device only (localStorage).</p>
+  <details class="settings">
+    <summary>Settings &amp; backup</summary>
+
+    <label class="field" for="start-date">Plan start date (the Monday of Week 1)</label>
+    <input type="date" id="start-date">
+    <p id="start-hint" class="muted small">Set this and the app opens on the right week and day, and counts down to test day.</p>
+
+    <div class="btn-row">
+      <button id="export-btn" type="button">Export backup</button>
+      <button id="import-btn" type="button">Import backup</button>
+      <input type="file" id="import-file" accept="application/json,.json" hidden>
+    </div>
+    <p id="backup-msg" class="muted small">A backup is a small JSON file of everything you have logged.</p>
+
+    <div class="btn-row">
+      <button id="offline-btn" type="button">Save photos for offline</button>
+    </div>
+    <p id="offline-msg" class="muted small"></p>
+
+    <div class="btn-row">
+      <button id="reset-btn" class="danger" type="button">Reset progress</button>
+    </div>
+    <p class="muted small">Progress is saved on this device only (localStorage). Export a backup before clearing your browser data.</p>
+  </details>
 </footer>
+
+<div id="timerbar" class="timerbar">
+  <div id="timer-idle" class="timer-idle">
+    <span class="timer-label">Rest</span>
+    <div id="timer-presets" class="presets" role="group" aria-label="Rest length"></div>
+    <label class="auto"><input type="checkbox" id="timer-auto"><span>Auto</span></label>
+    <button id="timer-start" class="timer-go" type="button">Start</button>
+  </div>
+  <div id="timer-run" class="timer-run" hidden>
+    <div id="timer-fill" class="timer-fill"></div>
+    <span id="timer-left" class="timer-left">0:00</span>
+    <button id="timer-add" class="timer-add" type="button">+30s</button>
+    <button id="timer-stop" class="timer-go" type="button">Stop</button>
+  </div>
+</div>
 
 <div id="lightbox" class="lightbox" hidden role="dialog" aria-modal="true" aria-label="Exercise form photo">
   <button id="lightbox-close" class="lightbox-close" aria-label="Close">&times;</button>
@@ -50,7 +99,7 @@
   <p id="lightbox-cap" class="lightbox-cap"></p>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" crossorigin="anonymous"></script>
 <script src="data.js"></script>
 <script src="app.js"></script>
 </body>

@@ -36,7 +36,7 @@ html { -webkit-text-size-adjust: 100%; }
 
 body {
   margin: 0;
-  padding: 0 0 env(safe-area-inset-bottom);
+  padding: 0 0 calc(74px + env(safe-area-inset-bottom));
   background: var(--bg);
   color: var(--ink);
   font: 16px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
@@ -76,6 +76,17 @@ main { padding: 12px 12px 8px; max-width: 720px; margin: 0 auto; }
 
 .topbar h1 { font-size: 18px; letter-spacing: .2px; }
 
+.brand { display: flex; flex-direction: column; gap: 2px; }
+
+.countdown {
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: .03em;
+  color: var(--muted);
+}
+
+.countdown.is-close { color: var(--test); }
+
 .tabs {
   display: flex;
   background: #232936;
@@ -97,14 +108,38 @@ main { padding: 12px 12px 8px; max-width: 720px; margin: 0 auto; }
 
 .tab.is-active { background: var(--cardio); color: var(--dark-on-accent); font-weight: 650; }
 
+.pill-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 720px;
+  margin: 0 auto;
+}
+
 .week-pills {
   display: flex;
   gap: 8px;
   overflow-x: auto;
   padding: 10px 0 2px;
-  max-width: 720px;
-  margin: 0 auto;
+  flex: 1;
+  min-width: 0;
   scrollbar-width: none;
+}
+
+.today-btn {
+  flex: 0 0 auto;
+  appearance: none;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--dark-on-accent);
+  background: var(--cardio);
+  border: 0;
+  border-radius: 999px;
+  padding: 8px 12px;
+  margin: 8px 0 0 2px;
+  box-shadow: -10px 0 12px 6px var(--bar);
+  cursor: pointer;
 }
 
 .week-pills::-webkit-scrollbar { display: none; }
@@ -173,7 +208,23 @@ main { padding: 12px 12px 8px; max-width: 720px; margin: 0 auto; }
   min-width: 34px;
 }
 
+.day.is-today { border-color: #3a4657; box-shadow: 0 0 0 1px #3a4657; }
+
 .day-head .title { flex: 1; font-weight: 600; font-size: 15px; }
+
+.today-chip {
+  display: inline-block;
+  margin-left: 8px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--cardio);
+  border: 1px solid var(--cardio-dim);
+  border-radius: 999px;
+  padding: 1px 7px;
+  vertical-align: 1px;
+}
 
 .badge {
   font-size: 11px;
@@ -270,20 +321,65 @@ input[type="number"] { -moz-appearance: textfield; }
 
 /* ---------- exercises ---------- */
 
-.ex { padding: 12px 0; }
+.ex { padding: 14px 0; }
 .ex + .ex { border-top: 1px solid var(--line); }
 
-.ex-top { display: flex; align-items: flex-start; gap: 12px; }
+.ex-head { display: flex; align-items: flex-start; gap: 10px; }
 .ex-name { flex: 1; font-weight: 600; font-size: 15px; }
 .ex-name .target { display: block; font-weight: 400; font-size: 13px; color: var(--muted); margin-top: 2px; }
-.ex input[type="checkbox"]:checked { background: var(--strength); border-color: var(--strength); }
-.ex-top input:checked ~ .ex-name .ex-label { color: var(--muted); text-decoration: line-through; }
+.ex-tick { color: #3fd48a; font-weight: 700; font-size: 15px; opacity: 0; transition: opacity .15s; }
+.ex.is-done .ex-tick { opacity: 1; }
+.ex.is-done .ex-label { color: var(--muted); text-decoration: line-through; }
 
-.inputs { display: flex; gap: 10px; margin: 10px 0 0 38px; }
+.sets-row { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+.sets-label { font-size: 12px; font-weight: 600; color: var(--muted); min-width: 30px; }
+.pips { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.pip {
+  appearance: none;
+  width: 42px;
+  height: 42px;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 650;
+  color: var(--muted);
+  background: #1b212b;
+  border: 2px solid #475263;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background .12s, color .12s, border-color .12s;
+}
+
+.pip.optional { border-style: dashed; }
+.pip.on { background: var(--strength); border-color: var(--strength); color: var(--dark-on-accent); }
+
+.lastline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.lastline .use {
+  appearance: none;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--cardio);
+  background: transparent;
+  border: 1px solid var(--cardio-dim);
+  border-radius: 999px;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+
+.inputs { display: flex; gap: 10px; margin: 10px 0 0; }
 .inputs label { flex: 1; font-size: 12px; font-weight: 600; color: var(--muted); }
 .inputs input { margin-top: 3px; }
 
-.shots { display: flex; gap: 8px; margin: 10px 0 0 38px; }
+.shots { display: flex; gap: 8px; margin: 10px 0 0; }
 
 .shots button {
   flex: 1 1 0;
@@ -306,7 +402,7 @@ input[type="number"] { -moz-appearance: textfield; }
   filter: brightness(.94) contrast(1.02);
 }
 
-details.cues { margin: 10px 0 0 38px; }
+details.cues { margin: 10px 0 0; }
 
 details.cues summary {
   font-size: 13px;
@@ -399,6 +495,154 @@ button.danger {
   background: rgba(255, 255, 255, .14);
   border: 0;
   border-radius: 50%;
+  cursor: pointer;
+}
+
+/* ---------- settings ---------- */
+
+.settings {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px;
+  text-align: left;
+}
+
+.settings summary {
+  font-size: 15px;
+  font-weight: 650;
+  cursor: pointer;
+  list-style: none;
+}
+
+.settings summary::-webkit-details-marker { display: none; }
+.settings summary::before { content: "▸ "; color: var(--muted); }
+.settings[open] summary::before { content: "▾ "; }
+.settings > p { margin: 6px 0 0; }
+.settings label.field { margin-top: 16px; }
+
+input[type="date"] {
+  font: inherit;
+  font-size: 16px;
+  padding: 10px;
+  margin-top: 5px;
+  border: 1px solid var(--field-line);
+  border-radius: 10px;
+  background: var(--field);
+  color: var(--ink);
+}
+
+.btn-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+
+.btn-row button {
+  appearance: none;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+  background: var(--card-2);
+  border: 1px solid var(--field-line);
+  border-radius: 10px;
+  padding: 11px 14px;
+  cursor: pointer;
+}
+
+.btn-row button:disabled { opacity: .55; cursor: default; }
+
+/* keeps the destructive button red — it sits inside .btn-row, which styles buttons too */
+.btn-row button.danger { color: #ff8f85; border-color: #5b2f2c; }
+
+/* ---------- rest timer ---------- */
+
+.timerbar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 30;
+  background: #12161d;
+  border-top: 1px solid var(--line);
+  padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+}
+
+.timerbar.done { background: var(--cardio-dim); }
+
+.timer-idle, .timer-run {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 720px;
+  margin: 0 auto;
+  position: relative;
+}
+
+.timer-label { font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.presets { display: flex; gap: 6px; flex: 1; }
+
+.preset {
+  appearance: none;
+  flex: 1 1 0;
+  min-width: 0;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  background: #1b212b;
+  border: 1px solid #333c4a;
+  border-radius: 8px;
+  padding: 9px 0;
+  cursor: pointer;
+}
+
+.preset.on { background: #232c3c; border-color: var(--strength); color: var(--ink); }
+
+.auto { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted); }
+.auto input[type="checkbox"] { width: 20px; height: 20px; border-radius: 6px; }
+.auto input[type="checkbox"]:checked::after { left: 5px; top: 1px; width: 4px; height: 9px; border-width: 0 2.5px 2.5px 0; }
+
+.timer-go {
+  appearance: none;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--dark-on-accent);
+  background: var(--cardio);
+  border: 0;
+  border-radius: 9px;
+  padding: 10px 16px;
+  cursor: pointer;
+}
+
+.timer-run { overflow: hidden; border-radius: 9px; }
+
+.timer-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: rgba(43,196,180,.16);
+  border-radius: 9px;
+  transition: width .2s linear;
+  pointer-events: none;
+}
+
+.timer-left {
+  flex: 1;
+  font-size: 26px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+  padding-left: 4px;
+}
+
+.timer-add {
+  appearance: none;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  background: #1b212b;
+  border: 1px solid #333c4a;
+  border-radius: 9px;
+  padding: 10px 12px;
   cursor: pointer;
 }
 
