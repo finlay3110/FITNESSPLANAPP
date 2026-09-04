@@ -361,9 +361,16 @@
     return m ? parseFloat(m[m.length - 1]) : null;
   }
 
+  var GRID = 'rgba(148,163,184,.18)';
+
   function renderProgress() {
     charts.forEach(function (c) { c.destroy(); });
     charts = [];
+    if (window.Chart) {
+      Chart.defaults.color = '#97a1b2';
+      Chart.defaults.borderColor = GRID;
+      Chart.defaults.font.family = getComputedStyle(document.body).fontFamily;
+    }
     renderBleep();
     renderStrength();
   }
@@ -399,11 +406,13 @@
           label: 'Level reached',
           data: data,
           spanGaps: true,
-          borderColor: '#c8992e',
-          backgroundColor: 'rgba(200,153,46,.15)',
+          borderColor: '#e2b23c',
+          backgroundColor: 'rgba(226,178,60,.16)',
           borderWidth: 3,
           pointRadius: 5,
-          pointBackgroundColor: '#c8992e',
+          pointBackgroundColor: '#e2b23c',
+          pointBorderColor: '#0d1016',
+          pointBorderWidth: 2,
           fill: true,
           tension: .25
         }]
@@ -412,7 +421,15 @@
         responsive: true,
         maintainAspectRatio: false,
         plugins: { legend: { display: false } },
-        scales: { y: { beginAtZero: false, title: { display: true, text: 'Level' } } }
+        scales: {
+          x: { grid: { color: GRID }, ticks: { color: '#97a1b2' } },
+          y: {
+            beginAtZero: false,
+            grid: { color: GRID },
+            ticks: { color: '#97a1b2' },
+            title: { display: true, text: 'Level', color: '#97a1b2' }
+          }
+        }
       }
     }));
   }
@@ -443,7 +460,9 @@
     return order.map(function (k) { return byKey[k]; });
   }
 
-  function exerciseCard(g, gi) {
+  // Charts are queued rather than built here: Chart.js sizes a canvas from its
+  // container, so each card must be in the document before its chart is created.
+  function exerciseCard(g, gi, pending) {
     var card = el('div', { class: 'card' }, [el('h3', { text: g.name })]);
     var points = g.rows.map(function (r) { return r.logged ? numeric(r.logged) : null; });
     var plottable = points.filter(function (v) { return v != null; }).length;
@@ -451,30 +470,37 @@
     if (plottable >= 2 && window.Chart) {
       var cv = el('canvas', { id: 'ex-chart-' + gi });
       card.appendChild(el('div', { class: 'chart-wrap mini' }, [cv]));
-      charts.push(new Chart(cv.getContext('2d'), {
-        type: 'line',
-        data: {
-          labels: g.rows.map(function (r) { return 'W' + r.week; }),
-          datasets: [{
-            label: 'Weight logged',
-            data: points,
-            spanGaps: true,
-            borderColor: '#1b2a4a',
-            backgroundColor: 'rgba(27,42,74,.12)',
-            borderWidth: 2.5,
-            pointRadius: 4,
-            pointBackgroundColor: '#1b2a4a',
-            fill: true,
-            tension: .25
-          }]
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: { legend: { display: false } },
-          scales: { y: { beginAtZero: false } }
-        }
-      }));
+      pending.push(function () {
+        charts.push(new Chart(cv.getContext('2d'), {
+          type: 'line',
+          data: {
+            labels: g.rows.map(function (r) { return 'W' + r.week; }),
+            datasets: [{
+              label: 'Weight logged',
+              data: points,
+              spanGaps: true,
+              borderColor: '#6d8fe8',
+              backgroundColor: 'rgba(109,143,232,.16)',
+              borderWidth: 2.5,
+              pointRadius: 4,
+              pointBackgroundColor: '#6d8fe8',
+              pointBorderColor: '#0d1016',
+              pointBorderWidth: 2,
+              fill: true,
+              tension: .25
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+              x: { grid: { color: GRID }, ticks: { color: '#97a1b2' } },
+              y: { beginAtZero: false, grid: { color: GRID }, ticks: { color: '#97a1b2' } }
+            }
+          }
+        }));
+      });
     }
 
     var table = el('table', { class: 'log' }, [
@@ -498,6 +524,7 @@
   function renderStrength() {
     var wrap = document.getElementById('strength-progress');
     wrap.textContent = '';
+    var pending = [];
     var groups = strengthGroups();
     var logged = [], empty = [];
     groups.forEach(function (g, i) {
@@ -510,7 +537,7 @@
         el('p', { class: 'empty', text: 'No weights logged yet. Fill in the weight box next to an exercise on a strength day and it will show up here.' })
       ]));
     }
-    logged.forEach(function (item) { wrap.appendChild(exerciseCard(item.g, item.i)); });
+    logged.forEach(function (item) { wrap.appendChild(exerciseCard(item.g, item.i, pending)); });
 
     if (empty.length) {
       var box = el('details', { class: 'card fold' }, [
@@ -518,13 +545,15 @@
       ]);
       empty.forEach(function (item) {
         box.appendChild(el('h3', { class: 'sub', text: item.g.name }));
-        var card = exerciseCard(item.g, item.i);
+        var card = exerciseCard(item.g, item.i, pending);
         card.removeChild(card.firstChild);
         card.className = 'plain';
         box.appendChild(card);
       });
       wrap.appendChild(box);
     }
+
+    pending.forEach(function (make) { make(); });
   }
 
   /* ---------------- tabs, reset, boot ---------------- */

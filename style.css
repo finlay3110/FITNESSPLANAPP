@@ -1,13 +1,30 @@
+/* Dark-only theme. All surfaces, controls and charts are designed for a dark UI. */
 :root {
-  --cardio: #0f8b8d;
-  --strength: #1b2a4a;
-  --test: #c8992e;
-  --rest: #6b7280;
-  --bg: #f4f5f7;
-  --card: #ffffff;
-  --ink: #1a1d23;
-  --muted: #6b7280;
-  --line: #e3e6ea;
+  color-scheme: dark;
+
+  /* day-type accents, tuned for contrast on a dark ground */
+  --cardio: #2bc4b4;
+  --cardio-dim: #1b8a80;
+  --strength: #6d8fe8;
+  --strength-dim: #3d5498;
+  --test: #e2b23c;
+  --test-dim: #a37c14;
+  --rest: #8a93a6;
+
+  /* surfaces */
+  --bg: #0d1016;
+  --card: #171b23;
+  --card-2: #1d222c;
+  --bar: #11151c;
+  --line: #2a313d;
+  --field: #12161d;
+  --field-line: #333c4a;
+
+  /* text */
+  --ink: #e7ecf3;
+  --muted: #97a1b2;
+  --dark-on-accent: #0b1016;
+
   --radius: 14px;
 }
 
@@ -32,16 +49,20 @@ main { padding: 12px 12px 8px; max-width: 720px; margin: 0 auto; }
 .muted { color: var(--muted); }
 .small { font-size: 13px; }
 
+::placeholder { color: #6b7688; opacity: 1; }
+
+:focus-visible { outline: 2px solid var(--cardio); outline-offset: 2px; }
+
 /* ---------- top bar ---------- */
 
 .topbar {
   position: sticky;
   top: 0;
   z-index: 20;
-  background: var(--strength);
-  color: #fff;
+  background: var(--bar);
+  color: var(--ink);
   padding: max(8px, env(safe-area-inset-top)) 12px 8px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, .18);
+  border-bottom: 1px solid var(--line);
 }
 
 .topbar-row {
@@ -57,7 +78,7 @@ main { padding: 12px 12px 8px; max-width: 720px; margin: 0 auto; }
 
 .tabs {
   display: flex;
-  background: rgba(255, 255, 255, .14);
+  background: #232936;
   border-radius: 999px;
   padding: 3px;
 }
@@ -66,7 +87,7 @@ main { padding: 12px 12px 8px; max-width: 720px; margin: 0 auto; }
   appearance: none;
   border: 0;
   background: none;
-  color: #dfe4ec;
+  color: var(--muted);
   font: inherit;
   font-size: 14px;
   padding: 7px 14px;
@@ -74,7 +95,7 @@ main { padding: 12px 12px 8px; max-width: 720px; margin: 0 auto; }
   cursor: pointer;
 }
 
-.tab.is-active { background: #fff; color: var(--strength); font-weight: 600; }
+.tab.is-active { background: var(--cardio); color: var(--dark-on-accent); font-weight: 650; }
 
 .week-pills {
   display: flex;
@@ -91,9 +112,9 @@ main { padding: 12px 12px 8px; max-width: 720px; margin: 0 auto; }
 .pill {
   flex: 0 0 auto;
   appearance: none;
-  border: 1px solid rgba(255, 255, 255, .3);
-  background: transparent;
-  color: #eef1f6;
+  border: 1px solid #333c4a;
+  background: #1a1f28;
+  color: #c3cbd8;
   font: inherit;
   font-size: 14px;
   min-width: 62px;
@@ -102,15 +123,15 @@ main { padding: 12px 12px 8px; max-width: 720px; margin: 0 auto; }
   cursor: pointer;
 }
 
-.pill.is-active { background: #fff; color: var(--strength); border-color: #fff; font-weight: 650; }
-.pill .dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #58d68d; margin-left: 6px; vertical-align: middle; }
+.pill.is-active { background: var(--ink); color: #10141b; border-color: var(--ink); font-weight: 650; }
+.pill .dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #3fd48a; margin-left: 6px; vertical-align: middle; }
 
 /* ---------- week header ---------- */
 
 .week-head { padding: 4px 4px 12px; }
 .week-head h2 { font-size: 20px; }
 .week-head p { margin: 4px 0 0; font-size: 14px; color: var(--muted); }
-.week-head .bar { margin-top: 10px; height: 6px; border-radius: 999px; background: #e0e3e8; overflow: hidden; }
+.week-head .bar { margin-top: 10px; height: 6px; border-radius: 999px; background: #232936; overflow: hidden; }
 .week-head .bar span { display: block; height: 100%; background: var(--cardio); transition: width .2s; }
 
 /* ---------- day cards ---------- */
@@ -119,7 +140,7 @@ main { padding: 12px 12px 8px; max-width: 720px; margin: 0 auto; }
   background: var(--card);
   border-radius: var(--radius);
   margin-bottom: 10px;
-  box-shadow: 0 1px 3px rgba(16, 24, 40, .08);
+  border: 1px solid var(--line);
   border-left: 5px solid var(--rest);
   overflow: hidden;
 }
@@ -134,9 +155,10 @@ main { padding: 12px 12px 8px; max-width: 720px; margin: 0 auto; }
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 14px 14px;
+  padding: 14px;
   background: none;
   border: 0;
+  color: inherit;
   font: inherit;
   text-align: left;
   cursor: pointer;
@@ -158,7 +180,7 @@ main { padding: 12px 12px 8px; max-width: 720px; margin: 0 auto; }
   font-weight: 700;
   letter-spacing: .05em;
   text-transform: uppercase;
-  color: #fff;
+  color: var(--dark-on-accent);
   padding: 3px 8px;
   border-radius: 999px;
   background: var(--rest);
@@ -166,14 +188,14 @@ main { padding: 12px 12px 8px; max-width: 720px; margin: 0 auto; }
 
 .day[data-type="cardio"] .badge { background: var(--cardio); }
 .day[data-type="strength"] .badge { background: var(--strength); }
-.day[data-type="test"] .badge { background: var(--test); color: #3a2c05; }
+.day[data-type="test"] .badge { background: var(--test); }
 
 .chev { color: var(--muted); font-size: 12px; transition: transform .18s; }
 .day.is-open .chev { transform: rotate(180deg); }
 
-.day-body { padding: 0 14px 14px; border-top: 1px solid var(--line); padding-top: 12px; }
+.day-body { padding: 12px 14px 14px; border-top: 1px solid var(--line); background: #14181f; }
 
-.tick { color: #2fa360; font-weight: 700; font-size: 14px; }
+.tick { color: #3fd48a; font-weight: 700; font-size: 14px; }
 .count { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
 
 /* ---------- checkboxes / rows ---------- */
@@ -195,9 +217,9 @@ input[type="checkbox"] {
   width: 26px;
   height: 26px;
   margin: 0;
-  border: 2px solid #c3c9d2;
+  border: 2px solid #475263;
   border-radius: 7px;
-  background: #fff;
+  background: #1b212b;
   cursor: pointer;
   position: relative;
 }
@@ -211,7 +233,7 @@ input[type="checkbox"]:checked::after {
   top: 3px;
   width: 5px;
   height: 11px;
-  border: solid #fff;
+  border: solid var(--dark-on-accent);
   border-width: 0 3px 3px 0;
   transform: rotate(42deg);
 }
@@ -219,7 +241,7 @@ input[type="checkbox"]:checked::after {
 .check-row span { flex: 1; font-size: 15px; }
 .check-row input:checked + span { color: var(--muted); text-decoration: line-through; }
 
-.items { margin: 0 0 6px; padding-left: 20px; color: #3b4250; font-size: 15px; }
+.items { margin: 0 0 6px; padding-left: 20px; color: #c4ccd9; font-size: 15px; }
 .items li { margin: 4px 0; }
 
 label.field { display: block; margin-top: 12px; font-size: 13px; font-weight: 600; color: var(--muted); }
@@ -230,10 +252,15 @@ textarea, input[type="text"], input[type="number"] {
   font-size: 16px;
   padding: 10px;
   margin-top: 5px;
-  border: 1px solid #d6dae0;
+  border: 1px solid var(--field-line);
   border-radius: 10px;
-  background: #fff;
+  background: var(--field);
   color: var(--ink);
+}
+
+textarea:focus, input[type="text"]:focus, input[type="number"]:focus {
+  border-color: var(--cardio);
+  outline: none;
 }
 
 textarea { min-height: 62px; resize: vertical; }
@@ -262,14 +289,22 @@ input[type="number"] { -moz-appearance: textfield; }
   flex: 1 1 0;
   padding: 0;
   border: 1px solid var(--line);
-  background: #f0f1f4;
+  background: #0f131a;
   border-radius: 10px;
   overflow: hidden;
   cursor: zoom-in;
   min-height: 40px;
 }
 
-.shots img { display: block; width: 100%; height: 118px; object-fit: cover; object-position: top center; }
+/* The source photos are shot on white; dimming them slightly keeps the card from glaring. */
+.shots img {
+  display: block;
+  width: 100%;
+  height: 118px;
+  object-fit: cover;
+  object-position: top center;
+  filter: brightness(.94) contrast(1.02);
+}
 
 details.cues { margin: 10px 0 0 38px; }
 
@@ -285,17 +320,17 @@ details.cues summary {
 details.cues summary::-webkit-details-marker { display: none; }
 details.cues summary::before { content: "▸ "; }
 details.cues[open] summary::before { content: "▾ "; }
-details.cues ul { margin: 4px 0 0; padding-left: 20px; font-size: 13.5px; color: #40485a; }
+details.cues ul { margin: 4px 0 0; padding-left: 20px; font-size: 13.5px; color: #bcc5d3; }
 details.cues li { margin: 3px 0; }
 
 /* ---------- progress ---------- */
 
 .card {
   background: var(--card);
+  border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 14px;
   margin-bottom: 12px;
-  box-shadow: 0 1px 3px rgba(16, 24, 40, .08);
 }
 
 .card h2 { font-size: 17px; }
@@ -315,7 +350,7 @@ details.fold h3.sub { margin-top: 18px; font-size: 14px; }
 table.log { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 14px; }
 table.log th, table.log td { text-align: left; padding: 6px 4px; border-bottom: 1px solid var(--line); }
 table.log th { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 600; }
-table.log td.val { font-variant-numeric: tabular-nums; font-weight: 600; }
+table.log td.val { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--cardio); }
 table.log td.none { color: var(--muted); font-weight: 400; }
 
 /* ---------- footer / lightbox ---------- */
@@ -327,9 +362,9 @@ button.danger {
   font: inherit;
   font-size: 15px;
   font-weight: 600;
-  color: #b3261e;
-  background: #fff;
-  border: 1px solid #f0c4c1;
+  color: #ff8f85;
+  background: var(--card-2);
+  border: 1px solid #5b2f2c;
   border-radius: 10px;
   padding: 12px 20px;
   cursor: pointer;
@@ -341,7 +376,7 @@ button.danger {
   position: fixed;
   inset: 0;
   z-index: 50;
-  background: rgba(12, 15, 20, .93);
+  background: rgba(5, 7, 10, .95);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -349,9 +384,8 @@ button.danger {
   padding: 20px;
 }
 
-.lightbox[hidden] { display: none; }
 .lightbox img { max-width: 100%; max-height: 78vh; border-radius: 10px; }
-.lightbox-cap { color: #e9ecf1; font-size: 14px; margin: 12px 0 0; text-align: center; }
+.lightbox-cap { color: #d5dbe5; font-size: 14px; margin: 12px 0 0; text-align: center; }
 
 .lightbox-close {
   position: absolute;
