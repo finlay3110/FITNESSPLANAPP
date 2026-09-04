@@ -58,24 +58,70 @@
     }
   }
 
-  // Weekly check-in: resting HR, recovery HR (peak and 60s after stopping), bodyweight.
+  // Weekly check-in. Recovery is measured at fixed times rather than from a peak: a
+  // fingertip pulse oximeter needs a still, settled hand and cannot catch the peak.
   function weekState(n) {
-    if (!state.weeks[n]) state.weeks[n] = { restHr: '', hrPeak: '', hr60: '', weight: '' };
-    return state.weeks[n];
+    if (!state.weeks[n]) state.weeks[n] = { restHr: '', hr1: '', hr2: '', spo2: '', weight: '', sleep: '' };
+    var w = state.weeks[n];
+    if (w.hr1 === undefined) w.hr1 = w.hr60 || '';   // "HR 60s after stopping" is the same reading
+    if (w.hr2 === undefined) w.hr2 = '';
+    if (w.spo2 === undefined) w.spo2 = '';
+    if (w.sleep === undefined) w.sleep = '';
+    return w;
   }
 
-  function hrDrop(w) {
-    var peak = parseFloat(w.hrPeak), after = parseFloat(w.hr60);
-    if (isNaN(peak) || isNaN(after)) return null;
-    return Math.round(peak - after);
+  function num(v) {
+    var n = parseFloat(v);
+    return isNaN(n) ? null : n;
   }
+
+  // How much further the heart rate falls during the second minute.
+  function secondMinuteFall(w) {
+    var a = num(w.hr1), b = num(w.hr2);
+    return (a == null || b == null) ? null : Math.round(a - b);
+  }
+
+  var CHECKIN_FIELDS = 5;
 
   function checkinCount(n) {
     var w = weekState(n), done = 0;
-    if (String(w.restHr).trim()) done++;
-    if (hrDrop(w) != null) done++;
-    if (String(w.weight).trim()) done++;
+    if (num(w.restHr) != null) done++;
+    if (num(w.hr1) != null) done++;
+    if (num(w.spo2) != null) done++;
+    if (num(w.weight) != null) done++;
+    if (num(w.sleep) != null) done++;
     return done;
+  }
+
+  // Resting HR only means something against your own history, so the baseline is the
+  // average of every earlier week you logged.
+  function restBaseline(week) {
+    var vals = [];
+    for (var i = 1; i < week; i++) {
+      var v = num(weekState(i).restHr);
+      if (v != null) vals.push(v);
+    }
+    if (vals.length < 2) return null;
+    return vals.reduce(function (a, b) { return a + b; }, 0) / vals.length;
+  }
+
+  // A flag for "take the easy option today", not a diagnosis.
+  function readiness(week) {
+    var w = weekState(week), flags = [], base = restBaseline(week);
+    var rest = num(w.restHr), spo2 = num(w.spo2), sleep = num(w.sleep);
+    if (base != null && rest != null && rest - base >= 7) {
+      flags.push('resting HR ' + Math.round(rest - base) + ' bpm above your ' + Math.round(base) + ' bpm baseline');
+    }
+    if (spo2 != null && spo2 < 95) flags.push('SpO2 at ' + spo2 + '%');
+    if (sleep != null && sleep < 6.5) flags.push('only ' + sleep + " h sleep");
+    if (flags.length) {
+      return { ok: false, text: 'Readiness: ' + flags.join(', ') + '. Consider the easy option today, or move the hard session.' };
+    }
+    if (base != null && rest != null) {
+      var delta = Math.round(rest - base);
+      return { ok: true, text: 'Readiness: resting HR ' + (delta === 0 ? 'level with' : (delta < 0 ? Math.abs(delta) + ' bpm below' : delta + ' bpm above')) + ' your baseline. Good to go.' };
+    }
+    return null;
   }
 
   function dayState(week, day) {
@@ -84,6 +130,8 @@
     var s = state.days[key];
     if (!s.items) s.items = {};
     if (!s.ex) s.ex = {};
+    if (s.rpe === undefined) s.rpe = 0;
+    if (s.splits === undefined) s.splits = '';
     return s;
   }
 
@@ -285,7 +333,9 @@
     var list = $('days');
     list.textContent = '';
     list.appendChild(renderCheckin(currentWeek));
+    list.appendChild(el('p', { class: 'readiness', id: 'readiness', hidden: true }));
     DAYS.forEach(function (d) { list.appendChild(renderDay(currentWeek, d)); });
+    paintReadiness();
   }
 
   function numberField(labelText, hint, value, opts, onChange) {
@@ -310,33 +360,48 @@
     var count = checkinCount(week);
     card.appendChild(el('summary', null, [
       el('span', { class: 'checkin-title', text: 'Weekly check-in' }),
-      count === 3
+      count === CHECKIN_FIELDS
         ? el('span', { class: 'tick', text: '✓' })
-        : el('span', { class: 'count', text: count + '/3' })
+        : el('span', { class: 'count', text: count + '/' + CHECKIN_FIELDS })
     ]));
 
     var dropLine = el('p', { class: 'drop-line' });
     function paintDrop() {
-      var d = hrDrop(w);
-      dropLine.textContent = d == null
-        ? 'Enter both to see your 1-minute recovery.'
-        : 'Recovery: ' + d + ' bpm in 1 minute' + (d >= 35 ? ' — strong' : d >= 25 ? ' — decent' : '');
-      dropLine.classList.toggle('good', d != null && d >= 25);
+      var one = num(w.hr1), fall = secondMinuteFall(w);
+      if (one == null) {
+        dropLine.textContent = 'Sit down straight after your last hard interval, oximeter on, and read at 1 and 2 minutes.';
+        dropLine.classList.remove('good');
+        return;
+      }
+      dropLine.textContent = fall == null
+        ? one + ' bpm at 1 minute. Add the 2-minute reading for the second-minute fall.'
+        : one + ' bpm at 1 minute, falling ' + fall + ' bpm over the second minute.';
+      dropLine.classList.toggle('good', fall != null && fall >= 20);
+    }
+
+    function changed(key, extra) {
+      return function (v) {
+        w[key] = v;
+        save();
+        if (extra) extra();
+        syncCheckinCount(card, week);
+        paintReadiness();
+      };
     }
 
     var grid = el('div', { class: 'metrics' }, [
-      numberField('Resting HR', 'bpm, on waking', w.restHr,
-        { step: '1', min: '25', max: '150', placeholder: 'e.g. 58' },
-        function (v) { w.restHr = v; save(); syncCheckinCount(card, week); }),
+      numberField('Resting HR', 'bpm, on waking, before you sit up', w.restHr,
+        { step: '1', min: '25', max: '150', placeholder: 'e.g. 58' }, changed('restHr')),
+      numberField('SpO2', '%, at rest — a flag for illness, not fitness', w.spo2,
+        { step: '1', min: '70', max: '100', placeholder: 'e.g. 98' }, changed('spo2')),
+      numberField('HR at 1 min', 'bpm, seated, 1 min after the last hard interval', w.hr1,
+        { step: '1', min: '50', max: '220', placeholder: 'e.g. 146' }, changed('hr1', paintDrop)),
+      numberField('HR at 2 min', 'bpm, one minute later again', w.hr2,
+        { step: '1', min: '45', max: '210', placeholder: 'e.g. 124' }, changed('hr2', paintDrop)),
       numberField('Bodyweight', 'kg, same time each week', w.weight,
-        { step: '0.1', min: '30', max: '250', placeholder: 'e.g. 78.4' },
-        function (v) { w.weight = v; save(); syncCheckinCount(card, week); }),
-      numberField('Peak HR', 'bpm, end of last hard interval', w.hrPeak,
-        { step: '1', min: '80', max: '230', placeholder: 'e.g. 178' },
-        function (v) { w.hrPeak = v; save(); paintDrop(); syncCheckinCount(card, week); }),
-      numberField('HR after 60s', 'bpm, one minute after stopping', w.hr60,
-        { step: '1', min: '50', max: '220', placeholder: 'e.g. 146' },
-        function (v) { w.hr60 = v; save(); paintDrop(); syncCheckinCount(card, week); })
+        { step: '0.1', min: '30', max: '250', placeholder: 'e.g. 78.4' }, changed('weight')),
+      numberField('Sleep', 'typical hours a night this week', w.sleep,
+        { step: '0.5', min: '2', max: '14', placeholder: 'e.g. 7.5' }, changed('sleep'))
     ]);
 
     card.appendChild(grid);
@@ -345,10 +410,22 @@
     return card;
   }
 
+  // Readiness sits above the days, where it is seen before training rather than after.
+  function paintReadiness() {
+    var host = $('readiness');
+    var r = readiness(currentWeek);
+    host.hidden = !r;
+    if (!r) return;
+    host.textContent = r.text;
+    host.className = 'readiness' + (r.ok ? ' ok' : ' warn');
+  }
+
   function syncCheckinCount(card, week) {
     var count = checkinCount(week);
     card.querySelector('summary .tick, summary .count').replaceWith(
-      count === 3 ? el('span', { class: 'tick', text: '✓' }) : el('span', { class: 'count', text: count + '/3' })
+      count === CHECKIN_FIELDS
+        ? el('span', { class: 'tick', text: '✓' })
+        : el('span', { class: 'count', text: count + '/' + CHECKIN_FIELDS })
     );
   }
 
@@ -420,6 +497,7 @@
       (plan.exercises || []).forEach(function (ex, i) {
         body.appendChild(renderExercise(week, day, ex, i, card));
       });
+      body.appendChild(rpeField(week, day, s));
       body.appendChild(notesField(s));
       return body;
     }
@@ -443,6 +521,7 @@
         oninput: function (e) { s.level = e.target.value; save(); }
       });
       body.appendChild(el('label', { class: 'field level-field', text: 'Bleep test level reached' }, [lvl]));
+      body.appendChild(rpeField(week, day, s));
       body.appendChild(notesField(s));
       return body;
     }
@@ -458,8 +537,87 @@
       }),
       el('span', { text: plan.type === 'rest' ? 'Rested' : 'Session completed' })
     ]));
+    if (plan.type === 'cardio') {
+      body.appendChild(splitsField(s));
+      body.appendChild(rpeField(week, day, s));
+    }
     body.appendChild(notesField(s));
     return body;
+  }
+
+  var RPE_WORDS = ['', 'very easy', 'very easy', 'easy', 'easy', 'moderate', 'moderate',
+    'hard', 'hard', 'very hard', 'maximal'];
+
+  function rpeField(week, day, s) {
+    var wrap = el('div', { class: 'rpe' });
+    wrap.appendChild(el('span', { class: 'metric-name', text: 'How hard did that feel?' }));
+    var pips = el('div', { class: 'rpe-pips', role: 'group', 'aria-label': 'Session RPE, 1 to 10' });
+    var word = el('span', { class: 'rpe-word' });
+
+    function paint() {
+      Array.prototype.forEach.call(pips.children, function (b, i) {
+        var on = s.rpe === i + 1;
+        b.classList.toggle('on', on);
+        b.setAttribute('aria-pressed', on ? 'true' : 'false');
+      });
+      word.textContent = s.rpe ? s.rpe + ' — ' + RPE_WORDS[s.rpe] : 'Not logged';
+    }
+
+    for (var i = 1; i <= 10; i++) {
+      (function (n) {
+        pips.appendChild(el('button', {
+          class: 'rpe-pip', type: 'button', text: String(n), 'aria-label': 'RPE ' + n,
+          onclick: function () {
+            s.rpe = (s.rpe === n) ? 0 : n;
+            save();
+            paint();
+          }
+        }));
+      })(i);
+    }
+    wrap.appendChild(pips);
+    wrap.appendChild(word);
+    paint();
+    return wrap;
+  }
+
+  // "1:32" / "92" / "1:32.5" all mean the same thing; anything else in the box is ignored.
+  function parseSplits(text) {
+    return String(text || '').split(/[,;\n]+/).map(function (bit) {
+      bit = bit.trim();
+      if (!bit) return null;
+      var m = /^(\d+):([0-5]?\d(?:\.\d+)?)$/.exec(bit);
+      if (m) return parseInt(m[1], 10) * 60 + parseFloat(m[2]);
+      var plain = /^\d+(?:\.\d+)?$/.exec(bit);
+      return plain ? parseFloat(bit) : null;
+    }).filter(function (v) { return v != null && v > 0; });
+  }
+
+  function fmtSplit(sec) {
+    var whole = Math.round(sec * 10) / 10;
+    var mins = Math.floor(whole / 60);
+    var rest = Math.round((whole - mins * 60) * 10) / 10;
+    return mins ? mins + ':' + (rest < 10 ? '0' : '') + rest.toFixed(1).replace(/\.0$/, '') : whole + 's';
+  }
+
+  function splitsField(s) {
+    var summary = el('p', { class: 'splits-summary' });
+    function paint() {
+      var reps = parseSplits(s.splits);
+      if (!reps.length) {
+        summary.textContent = 'One time per rep, separated by commas.';
+        return;
+      }
+      var avg = reps.reduce(function (a, b) { return a + b; }, 0) / reps.length;
+      summary.textContent = reps.length + ' reps · average ' + fmtSplit(avg) + ' · best ' + fmtSplit(Math.min.apply(null, reps));
+    }
+    var input = el('input', {
+      type: 'text', inputmode: 'text', placeholder: 'e.g. 1:32, 1:30, 1:31, 1:29',
+      oninput: function (e) { s.splits = e.target.value; save(); paint(); }
+    });
+    input.value = s.splits || '';
+    paint();
+    return el('label', { class: 'field', text: 'Rep times' }, [input, summary]);
   }
 
   function notesField(s) {
@@ -717,6 +875,7 @@
     }
     renderBleep();
     renderCheckinCharts();
+    renderSessionCharts();
     renderStrength();
   }
 
@@ -854,6 +1013,57 @@
     return card;
   }
 
+  function spo2Card() {
+    var card = el('div', { class: 'card' }, [
+      el('h3', { text: 'SpO2' }),
+      el('p', { class: 'muted', text: 'Resting oxygen saturation sits near its ceiling in a healthy adult, so this is not expected to trend — it is here to catch a week where something is brewing.' })
+    ]);
+    var readings = PLAN.weeks.map(function (w) { return { week: w.week, v: num(weekState(w.week).spo2) } })
+      .filter(function (r) { return r.v != null; });
+    if (!readings.length) {
+      card.appendChild(el('p', { class: 'empty', text: 'Nothing logged yet.' }));
+      return card;
+    }
+    var strip = el('div', { class: 'spo2-strip' });
+    readings.forEach(function (r) {
+      strip.appendChild(el('span', { class: 'spo2-chip' + (r.v < 95 ? ' low' : '') }, [
+        el('span', { class: 'spo2-week', text: 'W' + r.week }),
+        el('span', { class: 'spo2-val', text: r.v + '%' })
+      ]));
+    });
+    card.appendChild(strip);
+    var low = readings.filter(function (r) { return r.v < 95; });
+    card.appendChild(el('p', { class: 'trend', text: low.length
+      ? 'Below 95% in week' + (low.length > 1 ? 's ' : ' ') + low.map(function (r) { return r.week; }).join(', ')
+        + ' — worth a look if it came with a high resting HR.'
+      : 'Every reading at 95% or above.' }));
+    return card;
+  }
+
+  // Weekly average of the session RPEs logged that week.
+  function rpeSeries() {
+    return PLAN.weeks.map(function (w) {
+      var vals = [];
+      DAYS.forEach(function (d) {
+        if (!w.days[d] || w.days[d].type === 'rest') return;
+        var r = dayState(w.week, d).rpe;
+        if (r) vals.push(r);
+      });
+      if (!vals.length) return null;
+      return Math.round((vals.reduce(function (a, b) { return a + b; }, 0) / vals.length) * 10) / 10;
+    });
+  }
+
+  // Average rep time per week for one weekday, so like is compared with like.
+  function splitSeries(day) {
+    return PLAN.weeks.map(function (w) {
+      if (!w.days[day] || w.days[day].type !== 'cardio') return null;
+      var reps = parseSplits(dayState(w.week, day).splits);
+      if (!reps.length) return null;
+      return Math.round((reps.reduce(function (a, b) { return a + b; }, 0) / reps.length) * 10) / 10;
+    });
+  }
+
   function renderCheckinCharts() {
     var wrap = $('checkin-progress');
     wrap.textContent = '';
@@ -864,10 +1074,25 @@
       'Taken on waking. Read the trend across weeks, not any single morning.',
       weekSeries(function (w) { return w.restHr; }), 'bpm', '#e8737a', true, pending));
 
+    var oneMin = weekSeries(function (w) { return w.hr1; });
+    var recovery = metricCard(
+      'Heart rate 1 minute after intervals',
+      'Measured seated, one minute after your last hard rep. Lower week to week off the same session means fitter — expect a step up when the plan raises the pace in weeks 3, 5 and 7.',
+      oneMin, 'bpm', '#2bc4b4', true, pending);
+    var falls = PLAN.weeks.map(function (w) { return secondMinuteFall(weekState(w.week)); })
+      .filter(function (v) { return v != null; });
+    if (falls.length) {
+      recovery.appendChild(el('p', { class: 'muted small',
+        text: 'Second-minute fall: ' + falls.join(', ') + ' bpm (latest ' + falls[falls.length - 1] + ').' }));
+    }
+    wrap.appendChild(recovery);
+
+    wrap.appendChild(spo2Card());
+
     wrap.appendChild(metricCard(
-      '1-minute recovery',
-      'How far your heart rate falls in the minute after your last hard interval. Bigger is better.',
-      weekSeries(function (w) { return hrDrop(w); }), 'bpm', '#2bc4b4', false, pending));
+      'Sleep',
+      'Typical hours a night. It explains most of the movement in the two numbers above.',
+      weekSeries(function (w) { return w.sleep; }), 'h', '#8fb0e8', false, pending));
 
     wrap.appendChild(metricCard(
       'Bodyweight',
@@ -877,7 +1102,33 @@
     pending.forEach(function (make) { make(); });
   }
 
-  // Every strength exercise, in plan order, with the weeks it appears in.
+  function renderSessionCharts() {
+    var wrap = $('session-progress');
+    wrap.textContent = '';
+    var pending = [];
+
+    wrap.appendChild(metricCard(
+      'Session RPE',
+      'Weekly average of how hard the sessions felt. The same work feeling easier is progress; feeling harder at the same pace means fatigue is stacking up.',
+      rpeSeries(), 'out of 10', '#e2b23c', true, pending));
+
+    [['Mon', 'Monday intervals'], ['Thu', 'Thursday intervals'], ['Wed', 'Wednesday cardio']].forEach(function (pair) {
+      var data = splitSeries(pair[0]);
+      if (!data.some(function (v) { return v != null; })) return;
+      var card = metricCard(
+        pair[1] + ' — average rep',
+        'Average of the rep times you logged. Comparable only while the session itself is unchanged, so mind the switch to shorter, faster reps in weeks 7–8.',
+        data, 'seconds', '#6d8fe8', true, pending);
+      wrap.appendChild(card);
+    });
+
+    if (!wrap.children.length) {
+      wrap.appendChild(el('div', { class: 'card' }, [el('p', { class: 'empty', text: 'Nothing logged yet.' })]));
+    }
+    pending.forEach(function (make) { make(); });
+  }
+
+  // Every strength exercise, in plan order  // Every strength exercise, in plan order, with the weeks it appears in.
   function strengthGroups() {
     var order = [], byKey = {};
     PLAN.weeks.forEach(function (w) {
@@ -1039,8 +1290,9 @@
     });
     Object.keys(out.weeks || {}).forEach(function (k) {
       var w = out.weeks[k];
-      if (!String(w.restHr).trim() && !String(w.hrPeak).trim()
-        && !String(w.hr60).trim() && !String(w.weight).trim()) delete out.weeks[k];
+      var any = ['restHr', 'hr1', 'hr2', 'hrPeak', 'hr60', 'spo2', 'weight', 'sleep']
+        .some(function (f) { return String(w[f] == null ? '' : w[f]).trim(); });
+      if (!any) delete out.weeks[k];
     });
     return out;
   }
