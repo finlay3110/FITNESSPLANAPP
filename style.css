@@ -249,6 +249,47 @@ main { padding: 12px 12px 8px; max-width: 720px; margin: 0 auto; }
 .tick { color: #3fd48a; font-weight: 700; font-size: 14px; }
 .count { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
 
+/* ---------- weekly check-in ---------- */
+
+.checkin {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-left: 5px solid #b18cf0;
+  border-radius: var(--radius);
+  margin-bottom: 10px;
+  padding: 14px;
+}
+
+.checkin summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.checkin summary::-webkit-details-marker { display: none; }
+.checkin-title { flex: 1; font-weight: 600; font-size: 15px; }
+.checkin-title::before { content: "▸ "; color: var(--muted); }
+.checkin[open] .checkin-title::before { content: "▾ "; }
+
+.metrics {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.metric { display: flex; flex-direction: column; }
+.metric-name { font-size: 13px; font-weight: 600; color: var(--muted); }
+.metric input { width: 100%; }
+.metric-hint { margin-top: 4px; font-size: 11.5px; color: #6f7a8c; line-height: 1.3; }
+
+.drop-line { margin: 12px 0 0; font-size: 13px; color: var(--muted); }
+.drop-line.good { color: var(--cardio); }
+
+.trend { margin: 8px 0 0; font-size: 13px; font-weight: 600; color: var(--ink); }
+
 /* ---------- checkboxes / rows ---------- */
 
 .check-row {

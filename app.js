@@ -13,6 +13,7 @@
   var state = load();
   var currentWeek = state.lastWeek || 1;
   var openDays = {};      // "1.Tue" -> true, so open/closed survives a re-render
+  var checkinOpen = false;
   var charts = [];        // live Chart.js instances, destroyed before each progress re-render
 
   /* ---------------- storage ---------------- */
@@ -23,6 +24,7 @@
       startDate: '',
       lastWeek: 1,
       timer: { duration: 90, auto: true, endsAt: 0 },
+      weeks: {},
       days: {}
     };
   }
@@ -44,6 +46,7 @@
     if (typeof s.timer.duration !== 'number') s.timer.duration = 90;
     if (typeof s.timer.auto !== 'boolean') s.timer.auto = true;
     if (typeof s.timer.endsAt !== 'number') s.timer.endsAt = 0;
+    if (!s.weeks || typeof s.weeks !== 'object') s.weeks = {};
     return s;
   }
 
@@ -53,6 +56,26 @@
     } catch (e) {
       console.warn('Could not save progress:', e);
     }
+  }
+
+  // Weekly check-in: resting HR, recovery HR (peak and 60s after stopping), bodyweight.
+  function weekState(n) {
+    if (!state.weeks[n]) state.weeks[n] = { restHr: '', hrPeak: '', hr60: '', weight: '' };
+    return state.weeks[n];
+  }
+
+  function hrDrop(w) {
+    var peak = parseFloat(w.hrPeak), after = parseFloat(w.hr60);
+    if (isNaN(peak) || isNaN(after)) return null;
+    return Math.round(peak - after);
+  }
+
+  function checkinCount(n) {
+    var w = weekState(n), done = 0;
+    if (String(w.restHr).trim()) done++;
+    if (hrDrop(w) != null) done++;
+    if (String(w.weight).trim()) done++;
+    return done;
   }
 
   function dayState(week, day) {
@@ -261,7 +284,72 @@
 
     var list = $('days');
     list.textContent = '';
+    list.appendChild(renderCheckin(currentWeek));
     DAYS.forEach(function (d) { list.appendChild(renderDay(currentWeek, d)); });
+  }
+
+  function numberField(labelText, hint, value, opts, onChange) {
+    var input = el('input', {
+      type: 'number', inputmode: 'decimal', step: opts.step, min: opts.min, max: opts.max,
+      placeholder: opts.placeholder, value: value,
+      oninput: function (e) { onChange(e.target.value); }
+    });
+    return el('label', { class: 'metric' }, [
+      el('span', { class: 'metric-name', text: labelText }),
+      input,
+      el('span', { class: 'metric-hint', text: hint })
+    ]);
+  }
+
+  function renderCheckin(week) {
+    var w = weekState(week);
+    var card = el('details', { class: 'checkin' });
+    if (checkinOpen) card.setAttribute('open', '');
+    card.addEventListener('toggle', function () { checkinOpen = card.open; });
+
+    var count = checkinCount(week);
+    card.appendChild(el('summary', null, [
+      el('span', { class: 'checkin-title', text: 'Weekly check-in' }),
+      count === 3
+        ? el('span', { class: 'tick', text: '✓' })
+        : el('span', { class: 'count', text: count + '/3' })
+    ]));
+
+    var dropLine = el('p', { class: 'drop-line' });
+    function paintDrop() {
+      var d = hrDrop(w);
+      dropLine.textContent = d == null
+        ? 'Enter both to see your 1-minute recovery.'
+        : 'Recovery: ' + d + ' bpm in 1 minute' + (d >= 35 ? ' — strong' : d >= 25 ? ' — decent' : '');
+      dropLine.classList.toggle('good', d != null && d >= 25);
+    }
+
+    var grid = el('div', { class: 'metrics' }, [
+      numberField('Resting HR', 'bpm, on waking', w.restHr,
+        { step: '1', min: '25', max: '150', placeholder: 'e.g. 58' },
+        function (v) { w.restHr = v; save(); syncCheckinCount(card, week); }),
+      numberField('Bodyweight', 'kg, same time each week', w.weight,
+        { step: '0.1', min: '30', max: '250', placeholder: 'e.g. 78.4' },
+        function (v) { w.weight = v; save(); syncCheckinCount(card, week); }),
+      numberField('Peak HR', 'bpm, end of last hard interval', w.hrPeak,
+        { step: '1', min: '80', max: '230', placeholder: 'e.g. 178' },
+        function (v) { w.hrPeak = v; save(); paintDrop(); syncCheckinCount(card, week); }),
+      numberField('HR after 60s', 'bpm, one minute after stopping', w.hr60,
+        { step: '1', min: '50', max: '220', placeholder: 'e.g. 146' },
+        function (v) { w.hr60 = v; save(); paintDrop(); syncCheckinCount(card, week); })
+    ]);
+
+    card.appendChild(grid);
+    card.appendChild(dropLine);
+    paintDrop();
+    return card;
+  }
+
+  function syncCheckinCount(card, week) {
+    var count = checkinCount(week);
+    card.querySelector('summary .tick, summary .count').replaceWith(
+      count === 3 ? el('span', { class: 'tick', text: '✓' }) : el('span', { class: 'count', text: count + '/3' })
+    );
   }
 
   function updateWeekBar() {
@@ -628,6 +716,7 @@
       Chart.defaults.font.family = getComputedStyle(document.body).fontFamily;
     }
     renderBleep();
+    renderCheckinCharts();
     renderStrength();
   }
 
@@ -688,6 +777,104 @@
         }
       }
     }));
+  }
+
+  function weekSeries(pick) {
+    return PLAN.weeks.map(function (w) {
+      var v = pick(weekState(w.week));
+      if (v == null) return null;
+      v = parseFloat(v);
+      return isNaN(v) ? null : v;
+    });
+  }
+
+  // "58 → 52 bpm (−6 since week 1)" — the whole point of logging these.
+  function trendLine(data, unit, betterDown) {
+    var first = null, last = null, firstWeek = 0, lastWeek = 0;
+    data.forEach(function (v, i) {
+      if (v == null) return;
+      if (first == null) { first = v; firstWeek = i + 1; }
+      last = v; lastWeek = i + 1;
+    });
+    if (first == null) return null;
+    if (lastWeek === firstWeek) return 'Week ' + firstWeek + ': ' + first + ' ' + unit;
+    var delta = Math.round((last - first) * 10) / 10;
+    var sign = delta > 0 ? '+' : delta < 0 ? '−' : '±';
+    var better = delta === 0 ? '' : ((delta < 0) === !!betterDown ? ' — going the right way' : '');
+    return 'Week ' + firstWeek + ': ' + first + ' → week ' + lastWeek + ': ' + last + ' ' + unit
+      + ' (' + sign + Math.abs(delta) + ')' + better;
+  }
+
+  function metricCard(title, blurb, data, unit, colour, betterDown, pending) {
+    var card = el('div', { class: 'card' }, [
+      el('h3', { text: title }),
+      el('p', { class: 'muted', text: blurb })
+    ]);
+    var points = data.filter(function (v) { return v != null; }).length;
+    if (!points) {
+      card.appendChild(el('p', { class: 'empty', text: 'Nothing logged yet.' }));
+      return card;
+    }
+    var trend = trendLine(data, unit, betterDown);
+    if (trend) card.appendChild(el('p', { class: 'trend', text: trend }));
+    if (points >= 2 && window.Chart) {
+      var cv = el('canvas');
+      card.appendChild(el('div', { class: 'chart-wrap mini' }, [cv]));
+      pending.push(function () {
+        charts.push(new Chart(cv.getContext('2d'), {
+          type: 'line',
+          data: {
+            labels: PLAN.weeks.map(function (w) { return 'W' + w.week; }),
+            datasets: [{
+              label: title,
+              data: data,
+              spanGaps: true,
+              borderColor: colour,
+              backgroundColor: 'transparent',
+              borderWidth: 2.5,
+              pointRadius: 4,
+              pointBackgroundColor: colour,
+              pointBorderColor: '#0d1016',
+              pointBorderWidth: 2,
+              tension: .25
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+              x: { grid: { color: GRID }, ticks: { color: '#97a1b2' } },
+              y: { beginAtZero: false, grid: { color: GRID }, ticks: { color: '#97a1b2' } }
+            }
+          }
+        }));
+      });
+    }
+    return card;
+  }
+
+  function renderCheckinCharts() {
+    var wrap = $('checkin-progress');
+    wrap.textContent = '';
+    var pending = [];
+
+    wrap.appendChild(metricCard(
+      'Resting heart rate',
+      'Taken on waking. Read the trend across weeks, not any single morning.',
+      weekSeries(function (w) { return w.restHr; }), 'bpm', '#e8737a', true, pending));
+
+    wrap.appendChild(metricCard(
+      '1-minute recovery',
+      'How far your heart rate falls in the minute after your last hard interval. Bigger is better.',
+      weekSeries(function (w) { return hrDrop(w); }), 'bpm', '#2bc4b4', false, pending));
+
+    wrap.appendChild(metricCard(
+      'Bodyweight',
+      'Weighed under the same conditions each week — a steady line while your bleep level climbs is the pattern you want.',
+      weekSeries(function (w) { return w.weight; }), 'kg', '#b18cf0', false, pending));
+
+    pending.forEach(function (make) { make(); });
   }
 
   // Every strength exercise, in plan order, with the weeks it appears in.
@@ -850,6 +1037,11 @@
         });
       if (!used) delete out.days[k];
     });
+    Object.keys(out.weeks || {}).forEach(function (k) {
+      var w = out.weeks[k];
+      if (!String(w.restHr).trim() && !String(w.hrPeak).trim()
+        && !String(w.hr60).trim() && !String(w.weight).trim()) delete out.weeks[k];
+    });
     return out;
   }
 
@@ -886,7 +1078,9 @@
         return;
       }
       var n = Object.keys(incoming.days).length;
-      if (!confirm('Replace everything currently logged with this backup (' + n + ' days)?')) return;
+      var wk = Object.keys(incoming.weeks || {}).length;
+      if (!confirm('Replace everything currently logged with this backup ('
+        + n + ' days, ' + wk + ' weekly check-ins)?')) return;
       state = incoming;
       state.v = 2;
       if (!state.timer) state.timer = blank().timer;
@@ -960,7 +1154,7 @@
 
   $('reset-btn').addEventListener('click', function () {
     if (!confirm('Reset all logged progress?\n\nThis clears every tick, weight, rep, note and bleep test level. The 8-week plan itself stays exactly as it is.')) return;
-    var keepStart = state.startDate, keepTimer = state.timer;
+    var keepStart = state.startDate, keepTimer = state.timer;   // weeks + days are cleared
     state = blank();
     state.startDate = keepStart;
     state.timer = keepTimer;
