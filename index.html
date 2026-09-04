@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1b2a4a">
+<title>JRFT 8-Week Prep Tracker</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-row">
+    <h1>JRFT Prep</h1>
+    <div class="tabs" role="tablist">
+      <button id="tab-plan" class="tab is-active" role="tab" aria-selected="true" aria-controls="view-plan">Plan</button>
+      <button id="tab-progress" class="tab" role="tab" aria-selected="false" aria-controls="view-progress">Progress</button>
+    </div>
+  </div>
+  <nav id="week-pills" class="week-pills" aria-label="Select week"></nav>
+</header>
+
+<main>
+  <section id="view-plan" role="tabpanel" aria-labelledby="tab-plan">
+    <div id="week-head" class="week-head"></div>
+    <div id="days"></div>
+  </section>
+
+  <section id="view-progress" role="tabpanel" aria-labelledby="tab-progress" hidden>
+    <div class="card">
+      <h2>Bleep test level</h2>
+      <p class="muted">Level reached on each Saturday test.</p>
+      <div class="chart-wrap"><canvas id="bleep-chart" aria-label="Bleep test level by week"></canvas></div>
+      <p id="bleep-empty" class="empty" hidden>No bleep test levels logged yet. Log a level on a Saturday test day.</p>
+    </div>
+    <h2 class="section-title">Strength log</h2>
+    <div id="strength-progress"></div>
+  </section>
+</main>
+
+<footer class="footer">
+  <button id="reset-btn" class="danger">Reset progress</button>
+  <p class="muted small">Progress is saved on this device only (localStorage).</p>
+</footer>
+
+<div id="lightbox" class="lightbox" hidden role="dialog" aria-modal="true" aria-label="Exercise form photo">
+  <button id="lightbox-close" class="lightbox-close" aria-label="Close">&times;</button>
+  <img id="lightbox-img" alt="">
+  <p id="lightbox-cap" class="lightbox-cap"></p>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
