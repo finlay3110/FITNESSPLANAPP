@@ -14,6 +14,7 @@
   var currentWeek = state.lastWeek || 1;
   var openDays = {};      // "1.Tue" -> true, so open/closed survives a re-render
   var checkinOpen = false;
+  var checkinDay = null;   // which day's check-in the card is showing
   var charts = [];        // live Chart.js instances, destroyed before each progress re-render
 
   /* ---------------- storage ---------------- */
@@ -24,7 +25,7 @@
       startDate: '',
       lastWeek: 1,
       timer: { duration: 90, auto: true, endsAt: 0 },
-      weeks: {},
+      checkins: {},
       days: {}
     };
   }
@@ -46,7 +47,7 @@
     if (typeof s.timer.duration !== 'number') s.timer.duration = 90;
     if (typeof s.timer.auto !== 'boolean') s.timer.auto = true;
     if (typeof s.timer.endsAt !== 'number') s.timer.endsAt = 0;
-    if (!s.weeks || typeof s.weeks !== 'object') s.weeks = {};
+    if (!s.checkins || typeof s.checkins !== 'object') s.checkins = {};
     return s;
   }
 
@@ -58,16 +59,32 @@
     }
   }
 
-  // Weekly check-in. Recovery is measured at fixed times rather than from a peak: a
-  // fingertip pulse oximeter needs a still, settled hand and cannot catch the peak.
-  function weekState(n) {
-    if (!state.weeks[n]) state.weeks[n] = { restHr: '', hr1: '', hr2: '', spo2: '', weight: '', sleep: '' };
-    var w = state.weeks[n];
-    if (w.hr1 === undefined) w.hr1 = w.hr60 || '';   // "HR 60s after stopping" is the same reading
-    if (w.hr2 === undefined) w.hr2 = '';
-    if (w.spo2 === undefined) w.spo2 = '';
-    if (w.sleep === undefined) w.sleep = '';
-    return w;
+  // Daily check-in, keyed like days ("3.Tue"). Recovery is measured at fixed times
+  // rather than from a peak: a fingertip pulse oximeter needs a still, settled hand.
+  function checkinState(week, day) {
+    var key = week + '.' + day;
+    if (!state.checkins[key]) state.checkins[key] = { restHr: '', hr1: '', hr2: '', spo2: '', weight: '', sleep: '' };
+    return state.checkins[key];
+  }
+
+  // Weekly records from the earlier version land on that week's Monday.
+  function migrateWeekly() {
+    if (!state.weeks) return;
+    Object.keys(state.weeks).forEach(function (n) {
+      var w = state.weeks[n], key = n + '.Mon';
+      if (!w || state.checkins[key]) return;
+      var moved = {
+        restHr: w.restHr || '',
+        hr1: w.hr1 !== undefined ? w.hr1 : (w.hr60 || ''),
+        hr2: w.hr2 || '',
+        spo2: w.spo2 || '',
+        weight: w.weight || '',
+        sleep: w.sleep || ''
+      };
+      var any = Object.keys(moved).some(function (f) { return String(moved[f]).trim(); });
+      if (any) state.checkins[key] = moved;
+    });
+    delete state.weeks;
   }
 
   function num(v) {
@@ -76,44 +93,54 @@
   }
 
   // How much further the heart rate falls during the second minute.
-  function secondMinuteFall(w) {
-    var a = num(w.hr1), b = num(w.hr2);
+  function secondMinuteFall(c) {
+    var a = num(c.hr1), b = num(c.hr2);
     return (a == null || b == null) ? null : Math.round(a - b);
   }
 
-  var CHECKIN_FIELDS = 5;
+  var CHECKIN_FIELDS = 4;   // the four taken every morning; recovery HR is gym-only
 
-  function checkinCount(n) {
-    var w = weekState(n), done = 0;
-    if (num(w.restHr) != null) done++;
-    if (num(w.hr1) != null) done++;
-    if (num(w.spo2) != null) done++;
-    if (num(w.weight) != null) done++;
-    if (num(w.sleep) != null) done++;
+  function checkinCount(week, day) {
+    var c = checkinState(week, day), done = 0;
+    if (num(c.restHr) != null) done++;
+    if (num(c.spo2) != null) done++;
+    if (num(c.weight) != null) done++;
+    if (num(c.sleep) != null) done++;
     return done;
   }
 
-  // Resting HR only means something against your own history, so the baseline is the
-  // average of every earlier week you logged.
-  function restBaseline(week) {
-    var vals = [];
-    for (var i = 1; i < week; i++) {
-      var v = num(weekState(i).restHr);
+  // Every check-in in plan order, oldest first — the basis of every chart.
+  function checkinDays() {
+    var out = [];
+    PLAN.weeks.forEach(function (w) {
+      DAYS.forEach(function (d) { out.push({ week: w.week, day: d, c: checkinState(w.week, d) }); });
+    });
+    return out;
+  }
+
+  // Resting HR only means something against your own history: the average of the last
+  // 14 logged days before this one.
+  function restBaseline(week, day) {
+    var all = checkinDays(), vals = [];
+    for (var i = 0; i < all.length; i++) {
+      if (all[i].week === week && all[i].day === day) break;
+      var v = num(all[i].c.restHr);
       if (v != null) vals.push(v);
     }
-    if (vals.length < 2) return null;
+    vals = vals.slice(-14);
+    if (vals.length < 3) return null;
     return vals.reduce(function (a, b) { return a + b; }, 0) / vals.length;
   }
 
   // A flag for "take the easy option today", not a diagnosis.
-  function readiness(week) {
-    var w = weekState(week), flags = [], base = restBaseline(week);
-    var rest = num(w.restHr), spo2 = num(w.spo2), sleep = num(w.sleep);
+  function readiness(week, day) {
+    var c = checkinState(week, day), flags = [], base = restBaseline(week, day);
+    var rest = num(c.restHr), spo2 = num(c.spo2), sleep = num(c.sleep);
     if (base != null && rest != null && rest - base >= 7) {
       flags.push('resting HR ' + Math.round(rest - base) + ' bpm above your ' + Math.round(base) + ' bpm baseline');
     }
     if (spo2 != null && spo2 < 95) flags.push('SpO2 at ' + spo2 + '%');
-    if (sleep != null && sleep < 6.5) flags.push('only ' + sleep + " h sleep");
+    if (sleep != null && sleep < 6.5) flags.push('only ' + sleep + ' h sleep');
     if (flags.length) {
       return { ok: false, text: 'Readiness: ' + flags.join(', ') + '. Consider the easy option today, or move the hard session.' };
     }
@@ -311,6 +338,7 @@
 
   function goToWeek(n, scroll) {
     currentWeek = n;
+    checkinDay = null;   // fall back to today, or Monday, in the week being opened
     state.lastWeek = n;
     save();
     syncPills();
@@ -351,82 +379,116 @@
     ]);
   }
 
+  function activeCheckinDay(week) {
+    var slot = todaySlot();
+    if (checkinDay) return checkinDay;
+    if (slot && slot.week === week) return slot.day;
+    return 'Mon';
+  }
+
+  function checkinSummaryNode(week) {
+    var logged = DAYS.filter(function (d) { return checkinCount(week, d) === CHECKIN_FIELDS; }).length;
+    return logged === DAYS.length
+      ? el('span', { class: 'tick', text: '✓' })
+      : el('span', { class: 'count', text: logged + '/7 days' });
+  }
+
   function renderCheckin(week) {
-    var w = weekState(week);
+    var day = activeCheckinDay(week);
+    var c = checkinState(week, day);
+    var slot = todaySlot();
     var card = el('details', { class: 'checkin' });
     if (checkinOpen) card.setAttribute('open', '');
     card.addEventListener('toggle', function () { checkinOpen = card.open; });
 
-    var count = checkinCount(week);
     card.appendChild(el('summary', null, [
-      el('span', { class: 'checkin-title', text: 'Weekly check-in' }),
-      count === CHECKIN_FIELDS
-        ? el('span', { class: 'tick', text: '✓' })
-        : el('span', { class: 'count', text: count + '/' + CHECKIN_FIELDS })
+      el('span', { class: 'checkin-title', text: 'Daily check-in' }),
+      checkinSummaryNode(week)
     ]));
+
+    // One chip per day: filled once that morning is logged, ringed for today.
+    var strip = el('div', { class: 'day-strip', role: 'group', 'aria-label': 'Check-in day' });
+    DAYS.forEach(function (d) {
+      var count = checkinCount(week, d);
+      strip.appendChild(el('button', {
+        class: 'day-chip' + (d === day ? ' is-active' : '')
+          + (count === CHECKIN_FIELDS ? ' full' : count ? ' part' : '')
+          + (slot && slot.week === week && slot.day === d ? ' today' : ''),
+        type: 'button', text: d, 'aria-pressed': d === day ? 'true' : 'false',
+        onclick: function () {
+          checkinDay = d;
+          card.replaceWith(renderCheckin(week));
+          paintReadiness();
+        }
+      }));
+    });
+    card.appendChild(strip);
 
     var dropLine = el('p', { class: 'drop-line' });
     function paintDrop() {
-      var one = num(w.hr1), fall = secondMinuteFall(w);
+      var one = num(c.hr1), fall = secondMinuteFall(c);
       if (one == null) {
-        dropLine.textContent = 'Sit down straight after your last hard interval, oximeter on, and read at 1 and 2 minutes.';
+        dropLine.textContent = 'On interval days, sit down straight after your last hard rep, oximeter on, and read at 1 and 2 minutes.';
         dropLine.classList.remove('good');
         return;
       }
-      dropLine.textContent = fall == null
-        ? one + ' bpm at 1 minute. Add the 2-minute reading for the second-minute fall.'
-        : one + ' bpm at 1 minute, falling ' + fall + ' bpm over the second minute.';
+      dropLine.textContent = one + ' bpm at 1 minute'
+        + (fall == null ? '. Add the 2-minute reading for the second-minute fall.' : ', falling ' + fall + ' bpm over the second minute.');
       dropLine.classList.toggle('good', fall != null && fall >= 20);
     }
 
     function changed(key, extra) {
       return function (v) {
-        w[key] = v;
+        c[key] = v;
         save();
         if (extra) extra();
-        syncCheckinCount(card, week);
+        syncCheckin(card, week, day);
         paintReadiness();
       };
     }
 
-    var grid = el('div', { class: 'metrics' }, [
-      numberField('Resting HR', 'bpm, on waking, before you sit up', w.restHr,
+    card.appendChild(el('div', { class: 'metrics' }, [
+      numberField('Resting HR', 'bpm, on waking, before you sit up', c.restHr,
         { step: '1', min: '25', max: '150', placeholder: 'e.g. 58' }, changed('restHr')),
-      numberField('SpO2', '%, at rest — a flag for illness, not fitness', w.spo2,
+      numberField('SpO2', '%, at rest — a flag for illness, not fitness', c.spo2,
         { step: '1', min: '70', max: '100', placeholder: 'e.g. 98' }, changed('spo2')),
-      numberField('HR at 1 min', 'bpm, seated, 1 min after the last hard interval', w.hr1,
-        { step: '1', min: '50', max: '220', placeholder: 'e.g. 146' }, changed('hr1', paintDrop)),
-      numberField('HR at 2 min', 'bpm, one minute later again', w.hr2,
-        { step: '1', min: '45', max: '210', placeholder: 'e.g. 124' }, changed('hr2', paintDrop)),
-      numberField('Bodyweight', 'kg, same time each week', w.weight,
+      numberField('Bodyweight', 'kg, before food', c.weight,
         { step: '0.1', min: '30', max: '250', placeholder: 'e.g. 78.4' }, changed('weight')),
-      numberField('Sleep', 'typical hours a night this week', w.sleep,
-        { step: '0.5', min: '2', max: '14', placeholder: 'e.g. 7.5' }, changed('sleep'))
-    ]);
+      numberField('Sleep', 'hours last night', c.sleep,
+        { step: '0.5', min: '2', max: '14', placeholder: 'e.g. 7.5' }, changed('sleep')),
+      numberField('HR at 1 min', 'bpm, seated, 1 min after the last hard rep', c.hr1,
+        { step: '1', min: '50', max: '220', placeholder: 'e.g. 146' }, changed('hr1', paintDrop)),
+      numberField('HR at 2 min', 'bpm, one minute later again', c.hr2,
+        { step: '1', min: '45', max: '210', placeholder: 'e.g. 124' }, changed('hr2', paintDrop))
+    ]));
 
-    card.appendChild(grid);
     card.appendChild(dropLine);
     paintDrop();
     return card;
   }
 
+  function syncCheckin(card, week, day) {
+    card.querySelector('summary .tick, summary .count').replaceWith(checkinSummaryNode(week));
+    var chip = card.querySelector('.day-chip.is-active');
+    if (chip) {
+      var count = checkinCount(week, day);
+      chip.classList.toggle('full', count === CHECKIN_FIELDS);
+      chip.classList.toggle('part', count > 0 && count < CHECKIN_FIELDS);
+    }
+  }
+
   // Readiness sits above the days, where it is seen before training rather than after.
   function paintReadiness() {
     var host = $('readiness');
-    var r = readiness(currentWeek);
+    if (!host) return;
+    var day = activeCheckinDay(currentWeek);
+    var r = readiness(currentWeek, day);
     host.hidden = !r;
     if (!r) return;
-    host.textContent = r.text;
+    var slot = todaySlot();
+    var isToday = slot && slot.week === currentWeek && slot.day === day;
+    host.textContent = isToday ? r.text : r.text.replace('Readiness:', 'Readiness (' + day + '):');
     host.className = 'readiness' + (r.ok ? ' ok' : ' warn');
-  }
-
-  function syncCheckinCount(card, week) {
-    var count = checkinCount(week);
-    card.querySelector('summary .tick, summary .count').replaceWith(
-      count === CHECKIN_FIELDS
-        ? el('span', { class: 'tick', text: '✓' })
-        : el('span', { class: 'count', text: count + '/' + CHECKIN_FIELDS })
-    );
   }
 
   function updateWeekBar() {
@@ -938,17 +1000,38 @@
     }));
   }
 
-  function weekSeries(pick) {
-    return PLAN.weeks.map(function (w) {
-      var v = pick(weekState(w.week));
-      if (v == null) return null;
-      v = parseFloat(v);
-      return isNaN(v) ? null : v;
+  // 56 values, one per day of the plan, in order.
+  function dailySeries(pick) {
+    return checkinDays().map(function (entry) { return num(pick(entry.c)); });
+  }
+
+  // Only week starts are labelled: 56 ticks would be unreadable on a phone.
+  function dailyLabels() {
+    return checkinDays().map(function (entry, i) { return i % 7 === 0 ? 'W' + entry.week : ''; });
+  }
+
+  function weeklyAverages(daily) {
+    return PLAN.weeks.map(function (w, i) {
+      var vals = daily.slice(i * 7, i * 7 + 7).filter(function (v) { return v != null; });
+      if (!vals.length) return null;
+      return Math.round((vals.reduce(function (a, b) { return a + b; }, 0) / vals.length) * 10) / 10;
     });
   }
 
-  // "58 → 52 bpm (−6 since week 1)" — the whole point of logging these.
-  function trendLine(data, unit, betterDown) {
+  // Trailing mean of the last 7 logged values — how a daily bodyweight is meant to be read.
+  function rollingMean(daily, window) {
+    var seen = [];
+    return daily.map(function (v) {
+      if (v == null) return null;
+      seen.push(v);
+      if (seen.length > window) seen.shift();
+      if (seen.length < 3) return null;
+      return Math.round((seen.reduce(function (a, b) { return a + b; }, 0) / seen.length) * 10) / 10;
+    });
+  }
+
+  // betterDown: true = lower is better, false = higher is better, null = no verdict.
+  function trendLine(data, unit, betterDown, noun) {
     var first = null, last = null, firstWeek = 0, lastWeek = 0;
     data.forEach(function (v, i) {
       if (v == null) return;
@@ -956,25 +1039,44 @@
       last = v; lastWeek = i + 1;
     });
     if (first == null) return null;
-    if (lastWeek === firstWeek) return 'Week ' + firstWeek + ': ' + first + ' ' + unit;
+    var label = noun || 'Week';
+    if (lastWeek === firstWeek) return label + ' ' + firstWeek + ': ' + first + ' ' + unit;
     var delta = Math.round((last - first) * 10) / 10;
     var sign = delta > 0 ? '+' : delta < 0 ? '−' : '±';
-    var better = delta === 0 ? '' : ((delta < 0) === !!betterDown ? ' — going the right way' : '');
-    return 'Week ' + firstWeek + ': ' + first + ' → week ' + lastWeek + ': ' + last + ' ' + unit
-      + ' (' + sign + Math.abs(delta) + ')' + better;
+    var better = (delta === 0 || betterDown == null) ? ''
+      : ((delta < 0) === !!betterDown ? ' — going the right way' : '');
+    return label + ' ' + firstWeek + ': ' + first + ' → ' + label.toLowerCase() + ' ' + lastWeek + ': '
+      + last + ' ' + unit + ' (' + sign + Math.abs(delta) + ')' + better;
   }
 
-  function metricCard(title, blurb, data, unit, colour, betterDown, pending) {
+  function lineDataset(label, data, colour, opts) {
+    opts = opts || {};
+    return {
+      label: label,
+      data: data,
+      spanGaps: true,
+      borderColor: colour,
+      backgroundColor: 'transparent',
+      borderWidth: opts.width || 2.5,
+      borderDash: opts.dash || [],
+      pointRadius: opts.pointRadius == null ? 4 : opts.pointRadius,
+      pointBackgroundColor: colour,
+      pointBorderColor: '#0d1016',
+      pointBorderWidth: opts.pointRadius === 0 ? 0 : 2,
+      tension: .25
+    };
+  }
+
+  function lineCard(title, blurb, labels, datasets, trend, pending) {
     var card = el('div', { class: 'card' }, [
       el('h3', { text: title }),
       el('p', { class: 'muted', text: blurb })
     ]);
-    var points = data.filter(function (v) { return v != null; }).length;
+    var points = datasets[0].data.filter(function (v) { return v != null; }).length;
     if (!points) {
       card.appendChild(el('p', { class: 'empty', text: 'Nothing logged yet.' }));
       return card;
     }
-    var trend = trendLine(data, unit, betterDown);
     if (trend) card.appendChild(el('p', { class: 'trend', text: trend }));
     if (points >= 2 && window.Chart) {
       var cv = el('canvas');
@@ -982,28 +1084,13 @@
       pending.push(function () {
         charts.push(new Chart(cv.getContext('2d'), {
           type: 'line',
-          data: {
-            labels: PLAN.weeks.map(function (w) { return 'W' + w.week; }),
-            datasets: [{
-              label: title,
-              data: data,
-              spanGaps: true,
-              borderColor: colour,
-              backgroundColor: 'transparent',
-              borderWidth: 2.5,
-              pointRadius: 4,
-              pointBackgroundColor: colour,
-              pointBorderColor: '#0d1016',
-              pointBorderWidth: 2,
-              tension: .25
-            }]
-          },
+          data: { labels: labels, datasets: datasets },
           options: {
             responsive: true,
             maintainAspectRatio: false,
             plugins: { legend: { display: false } },
             scales: {
-              x: { grid: { color: GRID }, ticks: { color: '#97a1b2' } },
+              x: { grid: { color: GRID }, ticks: { color: '#97a1b2', autoSkip: false, maxRotation: 0 } },
               y: { beginAtZero: false, grid: { color: GRID }, ticks: { color: '#97a1b2' } }
             }
           }
@@ -1013,29 +1100,49 @@
     return card;
   }
 
+  // One point per day, with the trend read off weekly averages so daily noise
+  // does not decide which way the line is going.
+  function dailyCard(title, blurb, daily, unit, colour, betterDown, pending, extra) {
+    var sets = [lineDataset(title, daily, colour, { pointRadius: 2.5, width: 2 })];
+    if (extra) sets.push(extra);
+    var trend = trendLine(weeklyAverages(daily), unit, betterDown);
+    return lineCard(title, blurb, dailyLabels(), sets,
+      trend ? 'Weekly average — ' + trend.charAt(0).toLowerCase() + trend.slice(1) : null, pending);
+  }
+
+  function metricCard(title, blurb, data, unit, colour, betterDown, pending) {
+    return lineCard(title, blurb,
+      PLAN.weeks.map(function (w) { return 'W' + w.week; }),
+      [lineDataset(title, data, colour)],
+      trendLine(data, unit, betterDown), pending);
+  }
+
   function spo2Card() {
     var card = el('div', { class: 'card' }, [
       el('h3', { text: 'SpO2' }),
-      el('p', { class: 'muted', text: 'Resting oxygen saturation sits near its ceiling in a healthy adult, so this is not expected to trend — it is here to catch a week where something is brewing.' })
+      el('p', { class: 'muted', text: 'Resting oxygen saturation sits near its ceiling in a healthy adult, so this is not expected to trend — it is here to catch a day where something is brewing.' })
     ]);
-    var readings = PLAN.weeks.map(function (w) { return { week: w.week, v: num(weekState(w.week).spo2) } })
+    var readings = checkinDays()
+      .map(function (e) { return { week: e.week, day: e.day, v: num(e.c.spo2) }; })
       .filter(function (r) { return r.v != null; });
     if (!readings.length) {
       card.appendChild(el('p', { class: 'empty', text: 'Nothing logged yet.' }));
       return card;
     }
+    var low = readings.filter(function (r) { return r.v < 95; });
+    var lowest = readings.reduce(function (a, b) { return b.v < a.v ? b : a; });
+    card.appendChild(el('p', { class: 'trend', text: readings.length + ' readings · lowest '
+      + lowest.v + '% (week ' + lowest.week + ', ' + lowest.day + ')' }));
     var strip = el('div', { class: 'spo2-strip' });
-    readings.forEach(function (r) {
+    readings.slice(-14).forEach(function (r) {
       strip.appendChild(el('span', { class: 'spo2-chip' + (r.v < 95 ? ' low' : '') }, [
-        el('span', { class: 'spo2-week', text: 'W' + r.week }),
+        el('span', { class: 'spo2-week', text: 'W' + r.week + ' ' + r.day }),
         el('span', { class: 'spo2-val', text: r.v + '%' })
       ]));
     });
     card.appendChild(strip);
-    var low = readings.filter(function (r) { return r.v < 95; });
-    card.appendChild(el('p', { class: 'trend', text: low.length
-      ? 'Below 95% in week' + (low.length > 1 ? 's ' : ' ') + low.map(function (r) { return r.week; }).join(', ')
-        + ' — worth a look if it came with a high resting HR.'
+    card.appendChild(el('p', { class: 'muted small', text: low.length
+      ? low.length + ' reading' + (low.length > 1 ? 's' : '') + ' below 95% — worth a look if they came with a high resting HR.'
       : 'Every reading at 95% or above.' }));
     return card;
   }
@@ -1069,35 +1176,37 @@
     wrap.textContent = '';
     var pending = [];
 
-    wrap.appendChild(metricCard(
+    wrap.appendChild(dailyCard(
       'Resting heart rate',
-      'Taken on waking. Read the trend across weeks, not any single morning.',
-      weekSeries(function (w) { return w.restHr; }), 'bpm', '#e8737a', true, pending));
+      'Taken on waking, one point per day. Any single morning is noisy — the weekly average is the signal.',
+      dailySeries(function (c) { return c.restHr; }), 'bpm', '#e8737a', true, pending));
 
-    var oneMin = weekSeries(function (w) { return w.hr1; });
-    var recovery = metricCard(
+    var oneMin = dailySeries(function (c) { return c.hr1; });
+    var recovery = dailyCard(
       'Heart rate 1 minute after intervals',
-      'Measured seated, one minute after your last hard rep. Lower week to week off the same session means fitter — expect a step up when the plan raises the pace in weeks 3, 5 and 7.',
+      'Measured seated, one minute after your last hard rep. Lower off the same session means fitter — expect a step up when the plan raises the pace in weeks 3, 5 and 7.',
       oneMin, 'bpm', '#2bc4b4', true, pending);
-    var falls = PLAN.weeks.map(function (w) { return secondMinuteFall(weekState(w.week)); })
+    var falls = checkinDays().map(function (e) { return secondMinuteFall(e.c); })
       .filter(function (v) { return v != null; });
     if (falls.length) {
       recovery.appendChild(el('p', { class: 'muted small',
-        text: 'Second-minute fall: ' + falls.join(', ') + ' bpm (latest ' + falls[falls.length - 1] + ').' }));
+        text: 'Second-minute fall, most recent last: ' + falls.slice(-8).join(', ') + ' bpm.' }));
     }
     wrap.appendChild(recovery);
 
     wrap.appendChild(spo2Card());
 
-    wrap.appendChild(metricCard(
+    wrap.appendChild(dailyCard(
       'Sleep',
-      'Typical hours a night. It explains most of the movement in the two numbers above.',
-      weekSeries(function (w) { return w.sleep; }), 'h', '#8fb0e8', false, pending));
+      'Hours a night. It explains most of the movement in the two numbers above.',
+      dailySeries(function (c) { return c.sleep; }), 'h', '#8fb0e8', false, pending));
 
-    wrap.appendChild(metricCard(
+    var weight = dailySeries(function (c) { return c.weight; });
+    wrap.appendChild(dailyCard(
       'Bodyweight',
-      'Weighed under the same conditions each week — a steady line while your bleep level climbs is the pattern you want.',
-      weekSeries(function (w) { return w.weight; }), 'kg', '#b18cf0', false, pending));
+      'Daily weight swings a kilo or two on food and fluid alone, so the dashed line — a 7-day rolling average — is the one to read.',
+      weight, 'kg', '#b18cf0', null, pending,
+      lineDataset('7-day average', rollingMean(weight, 7), '#e7ecf3', { pointRadius: 0, width: 2, dash: [5, 4] })));
 
     pending.forEach(function (make) { make(); });
   }
@@ -1288,11 +1397,11 @@
         });
       if (!used) delete out.days[k];
     });
-    Object.keys(out.weeks || {}).forEach(function (k) {
-      var w = out.weeks[k];
-      var any = ['restHr', 'hr1', 'hr2', 'hrPeak', 'hr60', 'spo2', 'weight', 'sleep']
-        .some(function (f) { return String(w[f] == null ? '' : w[f]).trim(); });
-      if (!any) delete out.weeks[k];
+    Object.keys(out.checkins || {}).forEach(function (k) {
+      var c = out.checkins[k];
+      var any = ['restHr', 'hr1', 'hr2', 'spo2', 'weight', 'sleep']
+        .some(function (f) { return String(c[f] == null ? '' : c[f]).trim(); });
+      if (!any) delete out.checkins[k];
     });
     return out;
   }
@@ -1330,14 +1439,17 @@
         return;
       }
       var n = Object.keys(incoming.days).length;
-      var wk = Object.keys(incoming.weeks || {}).length;
+      var ck = Object.keys(incoming.checkins || incoming.weeks || {}).length;
       if (!confirm('Replace everything currently logged with this backup ('
-        + n + ' days, ' + wk + ' weekly check-ins)?')) return;
+        + n + ' days, ' + ck + ' check-ins)?')) return;
       state = incoming;
       state.v = 2;
       if (!state.timer) state.timer = blank().timer;
+      if (!state.checkins) state.checkins = {};
       save();
       state = load();
+      migrateWeekly();
+      save();
       currentWeek = state.lastWeek || 1;
       openDays = {};
       $('start-date').value = state.startDate || '';
@@ -1446,6 +1558,9 @@
       });
     });
   }
+
+  migrateWeekly();
+  save();
 
   var slot = todaySlot();
   if (slot) {

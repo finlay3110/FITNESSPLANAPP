@@ -273,6 +273,36 @@ main { padding: 12px 12px 8px; max-width: 720px; margin: 0 auto; }
 .checkin-title::before { content: "▸ "; color: var(--muted); }
 .checkin[open] .checkin-title::before { content: "▾ "; }
 
+.day-strip {
+  display: flex;
+  gap: 5px;
+  margin-top: 13px;
+}
+
+.day-chip {
+  appearance: none;
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 9px 0 7px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  background: #1b212b;
+  border: 1px solid #333c4a;
+  border-bottom: 3px solid #333c4a;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+/* the bottom edge carries the logging state, so the active day still reads as selected */
+.day-chip.part { border-bottom-color: var(--test-dim); }
+.day-chip.full { border-bottom-color: var(--cardio); }
+.day-chip.today { color: var(--ink); }
+.day-chip.is-active { background: #2a3242; border-color: #55617a; color: var(--ink); }
+.day-chip.is-active.part { border-bottom-color: var(--test); }
+.day-chip.is-active.full { border-bottom-color: var(--cardio); }
+
 .metrics {
   display: grid;
   grid-template-columns: 1fr 1fr;

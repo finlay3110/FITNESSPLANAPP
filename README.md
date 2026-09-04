@@ -39,32 +39,35 @@ week, and a green dot on each pill once a week is fully ticked.
   copy them across. Notes at the bottom of the day.
 - **Test days**: the day's items as a checklist plus a "bleep test level reached" input.
 
-**Weekly check-in.** A card at the top of each week for the numbers worth tracking
-alongside the sessions. All of them are taken sitting still, which is what a fingertip
+**Daily check-in.** A card at the top of each week with a chip per day — tap a day to
+log it, and the chip's underline fills once that morning is done, so a week's routine is
+visible at a glance. All of these are taken sitting still, which is what a fingertip
 pulse oximeter can actually measure:
 
 - **Resting HR** — on waking, before you sit up. Noisy day to day (sleep, alcohol,
-  illness, dehydration all move it), so the week-to-week trend is the signal.
+  illness, dehydration all move it), which is exactly why it is logged daily: the app
+  charts every morning and reads the trend off weekly averages.
 - **SpO2** — resting oxygen saturation. This is *not* a fitness metric: in a healthy
   adult at sea level it already sits near its ceiling and training does not raise it.
   It is here as an illness flag — a couple of points down alongside a raised resting HR
   usually means something is brewing.
-- **HR at 1 min** and **HR at 2 min** — sit down straight after your last hard interval
-  and read at those two fixed times. A fingertip oximeter needs a still, settled hand
-  and cannot catch a peak, so the protocol uses fixed times instead. The 1-minute value
-  falling week to week off the same session means fitter; the app also shows how much
-  further it falls during the second minute. Compare within blocks — the plan raises
-  the pace at weeks 3, 5 and 7.
-- **Bodyweight** — once a week under the same conditions (morning, after the bathroom,
-  before food). A check rather than a target: steady weight while your bleep level
-  climbs is the pattern you want.
-- **Sleep** — typical hours a night. It explains most of the movement in the two heart
-  rate numbers.
+- **Bodyweight** — daily, before food. Day-to-day swings of a kilo or two are just food
+  and fluid, so the chart draws a 7-day rolling average over the daily points and that
+  dashed line is the one to read. Treat it as a check rather than a target: steady
+  weight while your bleep level climbs is the pattern you want.
+- **Sleep** — hours last night. It explains most of the movement in the numbers above.
+- **HR at 1 min** and **HR at 2 min** — on interval days only. Sit down straight after
+  your last hard rep and read at those two fixed times. A fingertip oximeter needs a
+  still, settled hand and cannot catch a peak, so the protocol uses fixed times instead.
+  The 1-minute value falling week to week off the same session means fitter; the app
+  also shows how much further it falls during the second minute. Compare within blocks —
+  the plan raises the pace at weeks 3, 5 and 7.
 
-**Readiness.** Above the day list, the app compares this week's resting HR against the
-average of your earlier weeks and looks at SpO2 and sleep. If your resting HR is 7+ bpm
-above baseline, SpO2 is under 95%, or you slept under 6.5 hours, it says so and suggests
-taking the easy option; otherwise it confirms you are in line with baseline.
+**Readiness.** Above the day list, the app compares the selected day's resting HR
+against your baseline — the average of the last 14 logged days before it, once at least
+three exist — and looks at SpO2 and sleep. If resting HR is 7+ bpm above baseline, SpO2
+is under 95%, or you slept under 6.5 hours, it says so and suggests taking the easy
+option; otherwise it confirms you are in line with baseline.
 
 **Per session.** Every training day takes a **session RPE** (1–10, "how hard did that
 feel") — the same work feeling easier week to week is progress, feeling harder at the
@@ -83,11 +86,12 @@ button, and a beep and buzz when it runs out. With **Auto** on it starts itself 
 time you tick a set. It counts against a wall-clock time, so it stays accurate if the
 screen sleeps and it survives a reload.
 
-**Progress view.** Bleep test level across the 8 Saturdays; then the check-in metrics —
-resting HR, 1-minute recovery, SpO2 (as a strip of readings rather than a trend line,
-since it should not trend), sleep and bodyweight; then session RPE and average rep times
-per session; then a chart and table per strength exercise showing the weight logged each
-week it appears.
+**Progress view.** Bleep test level across the 8 Saturdays; then the check-in metrics as
+daily lines with weekly-average trends — resting HR, 1-minute recovery, SpO2 (as recent
+readings and a lowest-reading summary rather than a trend line, since it should not
+trend), sleep, and bodyweight with its rolling average; then session RPE and average rep
+times per session; then a chart and table per strength exercise showing the weight
+logged each week it appears.
 Exercises you have logged sort to the top; the rest fold away.
 
 **Backup.** *Export backup* saves a JSON file of everything logged; *Import backup*
@@ -120,6 +124,8 @@ your start date and your timer settings untouched.
   seconds for the number to settle, same finger each time, no nail polish. Optical
   sensors are unreliable while you are moving, which is why the recovery protocol waits
   a full minute before the first reading.
+- Check-ins recorded in the earlier weekly version are migrated to that week's Monday
+  the first time the new version loads.
 - Rep times accept `1:32`, `92`, or `1:32.5`; anything unparseable in the box is ignored.
 - The rest timer's beep uses the Web Audio API, which iOS silences while the browser is
   in the background; the vibration and the countdown still work.
